@@ -119,7 +119,16 @@ function getRecentForDomains(limit = 80) {
   const domains = [
     { service: "netflix",   match: "netflix.com",       prefer: [/\/watch\/\d+/, /\/title\/\d+/] },
     { service: "hulu",      match: "hulu.com",          prefer: [/\/watch\/[A-Za-z0-9]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
-    { service: "disney",    match: "disneyplus.com",    prefer: [/\/video\/[A-Za-z0-9]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
+    // Expand Disney+: include player IDs, details pages, and query param matches
+    { service: "disney",    match: "disneyplus.com",    prefer: [
+        /\/video\/[A-Za-z0-9-]+/,
+        /\/player\/[A-Za-z0-9-]+/,
+        /\/movies\/[^\/]+(?:\/[A-Za-z0-9-]+)?/,
+        /\/series\/[^\/]+(?:\/[A-Za-z0-9-]+)?/,
+        /\/details\/[^\/?]+/,
+        /\/browse\/entity-[A-Za-z0-9-]+/,
+        /[?&](entityId|contentId|videoId)=/           // query has a content id
+      ] },
     { service: "prime",     match: "primevideo.com",    prefer: [/\/detail\/[^\/]+/] },
     { service: "max",       match: "max.com",           prefer: [/\/video\/[A-Za-z0-9-]+/, /\/series\/[^\/]+/] },
     { service: "peacock",   match: "peacocktv.com" },
