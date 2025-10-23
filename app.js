@@ -383,6 +383,7 @@ async function promptYouTubeURL() {
 
 // Wire up modal close + play button
 // Ensure history is loaded on boot before first render
+// In boot()
 function boot() {
   renderGrid();
   loadBraveHistory().finally(() => renderContinue());
@@ -398,24 +399,29 @@ function boot() {
   const backdrop = document.querySelector("#player-modal .modal__backdrop");
   if (backdrop) backdrop.addEventListener("click", hideModal);
 
-  // Header actions: Account + Settings
-  const acct = document.getElementById("btn-account");
-  if (acct) acct.addEventListener("click", () => {
-    // Placeholder: route to account management or open modal
-    alert("Account coming soon");
-  });
+  // Account modal wiring
+  const acctBtn = document.getElementById("btn-account");
+  if (acctBtn) acctBtn.addEventListener("click", showAccountModal);
+
+  const acctClose = document.getElementById("account-close");
+  if (acctClose) acctClose.addEventListener("click", hideAccountModal);
+
+  const acctBackdrop = document.querySelector("#account-modal .modal__backdrop");
+  if (acctBackdrop) acctBackdrop.addEventListener("click", hideAccountModal);
+}
 
   const settings = document.getElementById("btn-settings");
   if (settings) settings.addEventListener("click", () => {
     // Placeholder: route to settings or open modal
     alert("Settings coming soon");
   });
-}
+
 
 document.addEventListener("DOMContentLoaded", boot);
 
 // Top-level additions
 // Use aggregated Brave history
+// Top-level state and helpers
 const BRAVE_HISTORY_API = "http://localhost:5607/history/all";
 let braveHistory = [];
 
@@ -451,13 +457,18 @@ const SERVICE_LABELS = {
   plex: "Plex"
 };
 
+// NEW: active profile selection
+const PROFILE_KEY = "hub_profile_id";
+let activeProfileId = localStorage.getItem(PROFILE_KEY) || null;
+
+// Update history loader to respect profile
 async function loadBraveHistory() {
   try {
-    const res = await fetch(BRAVE_HISTORY_API);
+    const url = `${BRAVE_HISTORY_API}${activeProfileId ? `?profile=${encodeURIComponent(activeProfileId)}` : ""}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`History API ${res.status}`);
     const data = await res.json();
     braveHistory = Array.isArray(data.items) ? data.items : [];
-    // Normalize items (ensure thumb fallback)
     braveHistory = braveHistory.map(it => ({
       ...it,
       thumb: it.thumb || SERVICE_ICONS[it.service] || null
@@ -482,4 +493,55 @@ function getYouTubeResumeUrl() {
     return `https://www.youtube.com/watch?v=${v.id}`;
   }
   return null;
+}
+
+// Account modal logic
+async function fetchProfiles() {
+  try {
+    const res = await fetch("http://localhost:5607/profiles");
+    if (!res.ok) throw new Error(`Profiles ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data.profiles) ? data.profiles : [];
+  } catch (e) {
+    console.warn("Fetch profiles failed:", e.message);
+    return [];
+  }
+}
+
+function hideAccountModal() {
+  const modal = document.getElementById("account-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function showAccountModal() {
+  const modal = document.getElementById("account-modal");
+  const list = document.getElementById("profiles-list");
+  if (!modal || !list) return;
+
+  const profiles = await fetchProfiles();
+  list.innerHTML = "";
+
+  if (!profiles.length) {
+    const msg = document.createElement("div");
+    msg.style.color = "var(--muted)";
+    msg.textContent = "No Brave profiles detected.";
+    list.appendChild(msg);
+  } else {
+    for (const p of profiles) {
+      const btn = document.createElement("button");
+      btn.className = `profile-btn${activeProfileId === p.id ? " active" : ""}`;
+      // Use friendly label if available, otherwise the raw id
+      btn.textContent = p.label || p.id;
+      btn.addEventListener("click", async () => {
+        activeProfileId = p.id;
+        localStorage.setItem(PROFILE_KEY, activeProfileId);
+        hideAccountModal();
+        await loadBraveHistory();
+        renderContinue();
+      });
+      list.appendChild(btn);
+    }
+  }
+
+  modal.hidden = false;
 }

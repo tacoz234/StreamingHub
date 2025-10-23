@@ -33,6 +33,52 @@ const HISTORY_PATH = findHistoryFile();
 const RECENCY_DAYS = Number(process.env.RECENCY_DAYS || 14);
 const RECENCY_MS = RECENCY_DAYS * 24 * 60 * 60 * 1000;
 
+// NEW: active path override
+let ACTIVE_HISTORY_PATH = null;
+function setActiveHistoryPath(p) { ACTIVE_HISTORY_PATH = p || null; }
+function getActiveHistoryPath() { return ACTIVE_HISTORY_PATH || HISTORY_PATH; }
+
+// NEW: read profile names from Brave's Local State
+function readProfileNames() {
+  const statePath = path.join(HISTORY_DIR, "Local State");
+  const names = {};
+  try {
+    const raw = fs.readFileSync(statePath, "utf8");
+    const json = JSON.parse(raw);
+    // Brave/Chrome store friendly names here
+    const info = (json && json.profile && json.profile.info_cache) || {};
+    for (const key of Object.keys(info)) {
+      const label = info[key]?.name;
+      if (label) names[key] = String(label);
+    }
+  } catch {
+    // ignore; fall back to directory IDs
+  }
+  return names;
+}
+
+// NEW: list available Brave profiles with display labels
+function listProfiles() {
+  const out = [];
+  const labels = readProfileNames();
+  try {
+    const dirs = fs.readdirSync(HISTORY_DIR).filter(d => d === "Default" || d.startsWith("Profile"));
+    for (const d of dirs) {
+      const p = path.join(HISTORY_DIR, d, "History");
+      if (!fs.existsSync(p)) continue;
+      const stat = fs.statSync(p);
+      out.push({
+        id: d,              // e.g., "Default", "Profile 1"
+        label: labels[d] || d, // user-friendly name if available
+        path: p,
+        mtimeMs: stat.mtimeMs
+      });
+    }
+  } catch {}
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return out;
+}
+
 function safeCopy(src) {
   const tmpDir = path.join(__dirname, "..", "..", "tmp");
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
@@ -42,7 +88,7 @@ function safeCopy(src) {
 }
 
 function queryRows(sql, params = []) {
-  const source = HISTORY_PATH;
+  const source = getActiveHistoryPath();
   if (!source) throw new Error("Brave history file not found");
   const copyPath = safeCopy(source);
   const db = new Database(copyPath, { readonly: true });
@@ -56,5 +102,9 @@ module.exports = {
   RECENCY_DAYS,
   RECENCY_MS,
   webkitTimeToMs,
-  queryRows
+  queryRows,
+  // NEW exports
+  listProfiles,
+  setActiveHistoryPath,
+  getActiveHistoryPath
 };
