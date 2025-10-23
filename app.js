@@ -398,13 +398,12 @@ async function promptYouTubeURL() {
 // Ensure history is loaded on boot before first render
 function boot() {
   renderGrid();
-  // Load Brave history, then render continue
   loadBraveHistory().finally(() => renderContinue());
 
-  document.getElementById("clear-continue").addEventListener("click", clearRecent);
-
-  const btn = document.getElementById("play-youtube-btn");
-  if (btn) btn.addEventListener("click", promptYouTubeURL);
+  // Removed: clear-continue and play-youtube button listeners
+  // document.getElementById("clear-continue").addEventListener("click", clearRecent);
+  // const btn = document.getElementById("play-youtube-btn");
+  // if (btn) btn.addEventListener("click", promptYouTubeURL);
 
   const close = document.getElementById("modal-close");
   if (close) close.addEventListener("click", hideModal);
