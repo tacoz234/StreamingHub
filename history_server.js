@@ -119,17 +119,15 @@ function getRecentForDomains(limit = 80) {
   const domains = [
     { service: "netflix",   match: "netflix.com",       prefer: [/\/watch\/\d+/, /\/title\/\d+/] },
     { service: "hulu",      match: "hulu.com",          prefer: [/\/watch\/[A-Za-z0-9]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
-    // Expand Disney+: include player IDs, details pages, and query param matches
-    { service: "disney",    match: "disneyplus.com",    prefer: [
-        /\/video\/[A-Za-z0-9-]+/,
-        /\/player\/[A-Za-z0-9-]+/,
-        /\/movies\/[^\/]+(?:\/[A-Za-z0-9-]+)?/,
-        /\/series\/[^\/]+(?:\/[A-Za-z0-9-]+)?/,
-        /\/details\/[^\/?]+/,
-        /\/browse\/entity-[A-Za-z0-9-]+/,
-        /[?&](entityId|contentId|videoId)=/           // query has a content id
-      ] },
+    { service: "disney",    match: "disneyplus.com",    prefer: [/\/video\/[A-Za-z0-9-]+/, /\/player\/[A-Za-z0-9-]+/, /\/movies\/[^\/]+(?:\/[A-Za-z0-9-]+)?/, /\/series\/[^\/]+(?:\/[A-Za-z0-9-]+)?/, /\/details\/[^\/?]+/, /\/browse\/entity-[A-Za-z0-9-]+/, /[?&](entityId|contentId|videoId)=/] },
+    // Prime Video: include both primevideo.com and amazon.com portals
     { service: "prime",     match: "primevideo.com",    prefer: [/\/detail\/[^\/]+/] },
+    { service: "prime",     match: "amazon.com",        prefer: [
+        /\/Amazon-Video\/b\//,       // landing/portal pages
+        /\/Prime-Video\/b\//,        // alternate naming
+        /\/gp\/video\//,             // detail/watch flows
+        /[?&]nav_cs_prime_video\b/   // navbar Prime Video link
+      ] },
     { service: "max",       match: "max.com",           prefer: [/\/video\/[A-Za-z0-9-]+/, /\/series\/[^\/]+/] },
     { service: "peacock",   match: "peacocktv.com" },
     { service: "paramount", match: "paramountplus.com", prefer: [/\/shows\/.+\/video\/[A-Za-z0-9]+/, /\/movies\/[^\/]+\/[A-Za-z0-9]+/, /\/shows\/[^\/]+/] }
@@ -722,7 +720,7 @@ function canonicalizeItem(item) {
   try {
     const u = new URL(item.url);
     const host = u.hostname;
-    const canon = new URL(item.url); // clone
+    const canon = new URL(item.url);
     let changed = false;
 
     let peacockAssetId = null;

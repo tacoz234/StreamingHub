@@ -5,7 +5,7 @@ const services = [
   { id: "netflix", url: "https://www.netflix.com/", tint: ["#e50914", "#3a0004"], icon: "icons/netflix.svg" },
   { id: "hulu", url: "https://www.hulu.com/", tint: ["#00d36e", "#003b2c"], icon: "icons/hulu.jpg" },
   { id: "disney", url: "https://www.disneyplus.com/", tint: ["#0a84ff", "#001a3b"], icon: "icons/disney.png" },
-  { id: "prime", url: "https://www.primevideo.com/", tint: ["#00a8e1", "#002b3d"], icon: "icons/prime.png" },
+  { id: "prime", url: "https://www.amazon.com/gp/video/storefront?redirectToCMP=1", tint: ["#00a8e1", "#002b3d"], icon: "icons/prime.png" },
   { id: "max", url: "https://www.max.com/", tint: ["#745cf9", "#1a133c"], icon: "icons/hbomax.png" },
   { id: "appletv", url: "https://tv.apple.com/", tint: ["#7b7b7b", "#1f1f1f"], icon: "icons/apple_tv.png" }, // fallback tint
   { id: "peacock", url: "https://www.peacocktv.com/", tint: ["#ffd70f", "#3a2f00"], icon: "icons/peacock.png" },
