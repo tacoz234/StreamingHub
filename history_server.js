@@ -1,9 +1,11 @@
 // Brave history → YouTube recent endpoint
 // Auto-detect Brave profile and support more YouTube URL shapes.
+// Add: HTML metadata enrichment for thumbnails/titles
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const Database = require("better-sqlite3");
+const cheerio = require("cheerio");
 
 const app = express();
 const PORT = 5607;
@@ -181,7 +183,7 @@ app.get("/history/youtube", (_req, res) => {
   }
 });
 
-app.get("/history/all", (_req, res) => {
+app.get("/history/all", async (_req, res) => {
   try {
     if (!HISTORY_PATH || !fs.existsSync(HISTORY_PATH)) {
       return res.status(404).json({ error: "Brave history not found", path: HISTORY_PATH || "(auto-detect failed)" });
@@ -189,6 +191,10 @@ app.get("/history/all", (_req, res) => {
     const yt = getRecentYouTube(60);
     const others = getRecentForDomains(120);
     const items = [...yt, ...others].sort((a, b) => b.lastVisited - a.lastVisited);
+
+    // Enrich missing thumbnails/titles via OG meta
+    await enrichMeta(items, 36);
+
     res.json({ items, recencyDays: RECENCY_DAYS });
   } catch (e) {
     console.error(e);
@@ -201,3 +207,60 @@ app.listen(PORT, () => {
   console.log(`History file: ${HISTORY_PATH}`);
   console.log(`Recency filter: last ${RECENCY_DAYS} days`);
 });
+
+// Browser-like UA to maximize OG/Twitter meta tags
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
+// Simple in-memory cache to avoid repeated fetches (per URL)
+const metaCache = new Map();
+
+async function fetchMeta(url) {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" }
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const ogTitle =
+      $('meta[property="og:title"]').attr("content") ||
+      $('meta[name="twitter:title"]').attr("content") ||
+      $("title").text().trim();
+
+    const ogImage =
+      $('meta[property="og:image"]').attr("content") ||
+      $('meta[name="twitter:image"]').attr("content");
+
+    return {
+      title: ogTitle && ogTitle.length ? ogTitle : null,
+      thumb: ogImage && ogImage.length ? ogImage : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function enrichMeta(items, limit = 30) {
+  const tasks = [];
+  for (const it of items.slice(0, limit)) {
+    if (it.thumb) continue; // already have a thumbnail
+    if (!it.url) continue;
+    if (metaCache.has(it.url)) {
+      const meta = metaCache.get(it.url);
+      if (meta?.thumb && !it.thumb) it.thumb = meta.thumb;
+      if (meta?.title && (!it.title || it.title === it.service)) it.title = meta.title;
+      continue;
+    }
+    tasks.push(
+      (async () => {
+        const meta = await fetchMeta(it.url);
+        metaCache.set(it.url, meta);
+        if (meta?.thumb && !it.thumb) it.thumb = meta.thumb;
+        if (meta?.title && (!it.title || it.title === it.service)) it.title = meta.title;
+      })()
+    );
+  }
+  await Promise.allSettled(tasks);
+}
