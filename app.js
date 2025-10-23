@@ -7,7 +7,7 @@ const services = [
   { id: "disney", url: "https://www.disneyplus.com/", tint: ["#0a84ff", "#001a3b"], icon: "icons/disney.png" },
   { id: "prime", url: "https://www.amazon.com/gp/video/storefront?redirectToCMP=1", tint: ["#00a8e1", "#002b3d"], icon: "icons/prime.png" },
   { id: "max", url: "https://www.max.com/", tint: ["#745cf9", "#1a133c"], icon: "icons/hbomax.png" },
-  { id: "appletv", url: "https://tv.apple.com/", tint: ["#7b7b7b", "#1f1f1f"], icon: "icons/apple_tv.png" }, // fallback tint
+  { id: "appletv", url: "https://tv.apple.com/", tint: ["#7b7b7b", "#1f1f1f"], icon: "icons/apple_tv.png" },
   { id: "peacock", url: "https://www.peacocktv.com/", tint: ["#ffd70f", "#3a2f00"], icon: "icons/peacock.png" },
   { id: "paramount", url: "https://www.paramountplus.com/", tint: ["#00a3ff", "#003455"], icon: "icons/paramount.png" },
   { id: "applemusic", url: "https://music.apple.com/", tint: ["#fa2d48", "#6b1f22"], icon: "icons/apple_music.png" },
@@ -397,6 +397,19 @@ function boot() {
 
   const backdrop = document.querySelector("#player-modal .modal__backdrop");
   if (backdrop) backdrop.addEventListener("click", hideModal);
+
+  // Header actions: Account + Settings
+  const acct = document.getElementById("btn-account");
+  if (acct) acct.addEventListener("click", () => {
+    // Placeholder: route to account management or open modal
+    alert("Account coming soon");
+  });
+
+  const settings = document.getElementById("btn-settings");
+  if (settings) settings.addEventListener("click", () => {
+    // Placeholder: route to settings or open modal
+    alert("Settings coming soon");
+  });
 }
 
 document.addEventListener("DOMContentLoaded", boot);
