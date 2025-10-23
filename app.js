@@ -11,6 +11,7 @@ const services = [
   { id: "peacock", url: "https://www.peacocktv.com/", tint: ["#ffd70f", "#3a2f00"], icon: "icons/peacock.png" },
   { id: "paramount", url: "https://www.paramountplus.com/", tint: ["#00a3ff", "#003455"], icon: "icons/paramount.png" },
   { id: "applemusic", url: "https://music.apple.com/", tint: ["#fa2d48", "#6b1f22"], icon: "icons/apple_music.png" },
+  { id: "youtubetv", url: "https://tv.youtube.com/", tint: ["#ff0000", "#330000"], icon: "icons/youtube_tv.png" }
 ];
 
 const RECENT_KEY = "hub_recent_services";
@@ -418,6 +419,7 @@ const SERVICE_ICONS = {
   paramount: "icons/paramount.png",
   appletv: "icons/apple_tv.png",
   applemusic: "icons/apple_music.png",
+  youtubetv: "icons/youtube_tv.png",
   plex: null
 };
 
@@ -432,6 +434,7 @@ const SERVICE_LABELS = {
   paramount: "Paramount+",
   appletv: "Apple TV",
   applemusic: "Apple Music",
+  youtubetv: "YouTube TV",
   plex: "Plex"
 };
 

@@ -1,6 +1,11 @@
 const express = require("express");
 const fs = require("fs");
 
+// Polyfill fetch for Node < 18
+if (typeof fetch === "undefined") {
+  global.fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
+}
+
 // Compose services/utilities from the new module structure
 const { HISTORY_PATH, RECENCY_DAYS } = require("./src/utils/db");
 const { getRecentYouTube } = require("./src/services/youtube");
@@ -49,7 +54,7 @@ app.get("/history/all", async (_req, res) => {
 
     // Canonicalize, enrich missing meta, and dedupe by series
     items = normalizeItems(items);
-    await enrichMeta(items, 40);
+    await enrichMeta(items, 120); // raise from 40 to 120
     items = dedupeSeries(items);
 
     res.json({ items, recencyDays: RECENCY_DAYS });

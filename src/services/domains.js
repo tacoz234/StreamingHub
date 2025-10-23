@@ -56,7 +56,7 @@ function getRecentForDomains(limit = 80) {
         /\/gp\/video\/title\/[^\/?]+/,
         /\/gp\/video\/play\/[^\/?]+/
       ] },
-    { service: "max",       match: "max.com",           prefer: [/\/video\/[A-Za-z0-9-]+/, /\/series\/[^\/]+/] },
+    { service: "max",       match: "max.com",           prefer: [/\/video\/[A-Za-z0-9-]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
     { service: "peacock",   match: "peacocktv.com" },
     { service: "paramount", match: "paramountplus.com", prefer: [/\/shows\/.+\/video\/[A-Za-z0-9]+/, /\/movies\/[^\/]+\/[A-Za-z0-9]+/, /\/shows\/[^\/]+/] }
   ];

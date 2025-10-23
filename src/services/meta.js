@@ -161,14 +161,33 @@ function peacockImageFromAssetId(assetId, opts = {}) {
 }
 
 async function validateImage(url) {
-  const head = await fetch(url, { method: "HEAD", redirect: "follow" });
-  if (head.ok) return true;
-  const get = await fetch(url, {
-    method: "GET",
-    headers: { "Range": "bytes=0-0", "Accept": "image/*" },
-    redirect: "follow"
-  });
-  return get.ok;
+  try {
+    const head = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        "User-Agent": UA,
+        "Accept": "image/*",
+        "Referer": "https://www.google.com/"
+      },
+      redirect: "follow"
+    });
+    if (head.ok) return true;
+  } catch {}
+  try {
+    const get = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": UA,
+        "Accept": "image/*",
+        "Range": "bytes=0-0",
+        "Referer": "https://www.google.com/"
+      },
+      redirect: "follow"
+    });
+    return get.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function choosePeacockImage(assetId) {
@@ -334,7 +353,11 @@ async function enrichMeta(items, limit = 40) {
       }
 
       if (meta?.thumb) {
-        const ok = await validateImage(meta.thumb);
+        // Prime/Max CDNs commonly block HEAD/range probes; trust OG/TMDB URLs.
+        let ok = true;
+        if (it.service !== "prime" && it.service !== "max") {
+          ok = await validateImage(meta.thumb);
+        }
         if (!ok) meta.thumb = null;
       }
 
