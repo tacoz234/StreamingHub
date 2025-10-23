@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Streaming Hub</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <h1 class="app-title">Streaming Hub</h1>
+      <button id="clear-continue" class="ghost-btn" aria-label="Clear Continue Watching">
+        Clear Continue
+      </button>
+      <!-- New: Play YouTube URL -->
+      <button id="play-youtube-btn" class="ghost-btn" aria-label="Play YouTube URL">
+        Play YouTube URL
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="continue-section" class="section" hidden>
+      <h2 class="section-title">Continue Watching</h2>
+      <div id="continue-row" class="scroll-row" role="list"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">All Apps</h2>
+      <div id="grid" class="cards-grid" role="list"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <span>Quick tiles for your favorite services.</span>
+    </div>
+  </footer>
+
+  <!-- Modal YouTube player -->
+  <div id="player-modal" class="modal" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <span id="modal-title" class="modal__title">Playing</span>
+        <button id="modal-close" class="ghost-btn">Close</button>
+      </div>
+      <div id="yt-container" class="yt-container"></div>
+    </div>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

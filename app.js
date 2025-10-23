@@ -1,0 +1,484 @@
+// Update a few entries to show how to add icons.
+// Use your own logo files under `icons/` or remote URLs.
+const services = [
+  { id: "youtube", url: "https://www.youtube.com/", tint: ["#d00000", "#640000"], icon: "icons/youtube.jpg" },
+  { id: "netflix", url: "https://www.netflix.com/", tint: ["#e50914", "#3a0004"], icon: "icons/netflix.svg" },
+  { id: "hulu", url: "https://www.hulu.com/", tint: ["#00d36e", "#003b2c"], icon: "icons/hulu.jpg" },
+  { id: "disney", url: "https://www.disneyplus.com/", tint: ["#0a84ff", "#001a3b"], icon: "icons/disney.png" },
+  { id: "prime", url: "https://www.primevideo.com/", tint: ["#00a8e1", "#002b3d"], icon: "icons/prime.png" },
+  { id: "max", url: "https://www.max.com/", tint: ["#745cf9", "#1a133c"], icon: "icons/hbomax.png" },
+  { id: "appletv", url: "https://tv.apple.com/", tint: ["#7b7b7b", "#1f1f1f"], icon: "icons/apple_tv.png" }, // fallback tint
+  { id: "peacock", url: "https://www.peacocktv.com/", tint: ["#ffd70f", "#3a2f00"], icon: "icons/peacock.png" },
+  { id: "paramount", url: "https://www.paramountplus.com/", tint: ["#00a3ff", "#003455"], icon: "icons/paramount.png" },
+  { id: "applemusic", url: "https://music.apple.com/", tint: ["#fa2d48", "#6b1f22"], icon: "icons/apple_music.png" },
+];
+
+const RECENT_KEY = "hub_recent_services";
+const MAX_RECENT = 10;
+
+function saveVisit(id) {
+  const now = Date.now();
+  let recent = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+  // Keep unique by id and latest first
+  recent = [{ id, ts: now }, ...recent.filter(r => r.id !== id)].slice(0, MAX_RECENT);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+}
+
+function getRecent() {
+  const recent = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+  const map = Object.fromEntries(services.map(s => [s.id, s]));
+  // Only include those that still exist in services
+  return recent.map(r => ({ ...map[r.id], lastVisited: r.ts })).filter(Boolean);
+}
+
+// Replace: function clearRecent() { ... }
+function clearRecent() {
+  localStorage.removeItem(RECENT_KEY);          // app visits
+  localStorage.removeItem(RECENT_VIDEOS_KEY);   // saved YouTube videos
+  renderContinue();
+}
+
+function openService(service, evt) {
+  // Persist visit before navigation
+  saveVisit(service.id);
+  const openInNewTab = evt?.metaKey || evt?.ctrlKey || evt?.button === 1;
+  if (openInNewTab) {
+    window.open(service.url, "_blank", "noopener,noreferrer");
+  } else {
+    window.location.href = service.url;
+  }
+}
+
+// In: function createCard(service, { badgeText } = {}) { ... }
+function createCard(service, { badgeText, resumeUrl } = {}) {
+  const card = document.createElement("button");
+  card.className = "card";
+  card.type = "button";
+  card.setAttribute("role", "listitem");
+  card.setAttribute("aria-label", `${service.name} - ${service.sub}`);
+  card.onmousedown = (e) => {
+    // Middle-click support
+    if (e.button === 1) {
+      const target = resumeUrl && service.id === "youtube" ? resumeUrl : service.url;
+      window.open(target, "_blank", "noopener,noreferrer");
+    }
+  };
+  card.onclick = (e) => {
+    // Shift-click YouTube tile to play inside the hub (tracked progress)
+    if (service.id === "youtube" && e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      promptYouTubeURL();
+      return;
+    }
+    // If this is a YouTube "Continue" card and we have a resume URL, use it
+    if (service.id === "youtube" && resumeUrl) {
+      const openInNewTab = e.metaKey || e.ctrlKey;
+      if (openInNewTab) {
+        window.open(resumeUrl, "_blank", "noopener,noreferrer");
+      } else {
+        window.location.href = resumeUrl;
+      }
+      // Persist app visit as well
+      saveVisit(service.id);
+      return;
+    }
+    openService(service, e);
+  };
+
+  const [t0, t1] = service.tint;
+  const tint = document.createElement("div");
+  tint.className = "card__tint";
+  tint.style.background = `linear-gradient(135deg, ${t0}, ${t1})`;
+
+  const bg = document.createElement("div");
+  bg.className = "card__bg";
+
+  const overlay = document.createElement("div");
+  overlay.className = "card__overlay";
+
+  // Add icon if available
+  let logo = null;
+  if (service.icon) {
+    card.classList.add("card--has-icon");
+    logo = document.createElement("img");
+    logo.className = "card__logo";
+    logo.src = service.icon;
+    logo.alt = `${service.name} icon`;
+    logo.loading = "lazy";
+  }
+
+  const content = document.createElement("div");
+  content.className = "card__content";
+
+  const left = document.createElement("div");
+  const name = document.createElement("div");
+  name.className = "card__name";
+  name.textContent = service.name;
+  const sub = document.createElement("div");
+  sub.className = "card__sub";
+  sub.textContent = service.sub;
+  left.append(name, sub);
+
+  content.append(left);
+
+  // Append in the right order to stack layers
+  card.append(bg, tint);
+  if (logo) card.append(logo);
+  card.append(overlay, content);
+
+  if (badgeText) {
+    const badge = document.createElement("div");
+    badge.className = "card__badge";
+    badge.textContent = badgeText;
+    card.appendChild(badge);
+  }
+
+  return card;
+}
+
+function renderGrid() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  services.forEach(svc => grid.appendChild(createCard(svc)));
+}
+
+// Add YouTube-specific continue watching support
+const RECENT_VIDEOS_KEY = "hub_recent_videos";
+
+// Replace: function renderContinue() { ... }
+function renderContinue() {
+  const section = document.getElementById("continue-section");
+  const row = document.getElementById("continue-row");
+  row.innerHTML = "";
+
+  const savedVideos = getSavedVideos(); // YouTube via hub modal, with progress
+  const historyItems = braveHistory;    // Aggregated Brave (YT + other services)
+  const recentApps = getRecent();
+
+  if (savedVideos.length === 0 && historyItems.length === 0 && recentApps.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  const maxTotal = 12;
+  let count = 0;
+
+  // 1) Saved videos with progress (YouTube only)
+  for (const v of savedVideos) {
+    if (count >= maxTotal) break;
+    row.appendChild(createVideoCard({ ...v, service: "youtube" }));
+    count++;
+  }
+
+  // 2) Brave history videos (YouTube + other services), avoid duplicates
+  const savedIds = new Set(savedVideos.map(v => v.id));
+  for (const item of historyItems) {
+    if (count >= maxTotal) break;
+    if (item.service === "youtube" && savedIds.has(item.id)) continue;
+    row.appendChild(createVideoCard(item));
+    count++;
+  }
+
+  // 3) App-level “Continue” tiles
+  const ytResume = getYouTubeResumeUrl();
+  for (const svc of recentApps) {
+    if (count >= maxTotal) break;
+    const options = { badgeText: "Continue" };
+    if (svc.id === "youtube" && ytResume) {
+      options.resumeUrl = ytResume;
+    }
+    row.appendChild(createCard(svc, options));
+    count++;
+  }
+}
+
+// ---- YouTube helpers ----
+function parseYouTubeId(input) {
+  try {
+    const url = new URL(input);
+    if (url.hostname.includes("youtu.be")) return url.pathname.slice(1);
+    if (url.searchParams.has("v")) return url.searchParams.get("v");
+    const match = url.pathname.match(/\/embed\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+  } catch (_) {
+    // Not a URL; maybe a raw ID
+    const idMatch = input.match(/^[a-zA-Z0-9_-]{11}$/);
+    if (idMatch) return input;
+  }
+  return null;
+}
+
+async function fetchYouTubeMeta(videoId) {
+  const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+  try {
+    const res = await fetch(oembedUrl);
+    if (!res.ok) throw new Error("oEmbed failed");
+    const data = await res.json();
+    // oEmbed thumbnail is 480x360; prefer HQ if available
+    const fallbackThumb = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+    return { title: data.title, thumb: data.thumbnail_url || fallbackThumb };
+  } catch {
+    return {
+      title: "YouTube Video",
+      thumb: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+    };
+  }
+}
+
+function getSavedVideos() {
+  const arr = JSON.parse(localStorage.getItem(RECENT_VIDEOS_KEY) || "[]");
+  // sort newest first
+  return arr.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function saveVideoProgress(entry) {
+  const current = getSavedVideos();
+  const filtered = current.filter(v => v.id !== entry.id);
+  const updated = [
+    { ...entry, updatedAt: Date.now() },
+    ...filtered
+  ].slice(0, 20);
+  localStorage.setItem(RECENT_VIDEOS_KEY, JSON.stringify(updated));
+}
+
+// In: function createVideoCard(v) { ... }
+function createVideoCard(v) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "video-card";
+  card.setAttribute("role", "listitem");
+
+  // Build target URL:
+  // - prefer explicit v.url (Netflix/Hulu/etc or Brave history Youtube)
+  // - fallback to YouTube from id
+  const resumeSeconds = Math.floor(v.progress || 0);
+  const isYouTube = v.service === "youtube" || (!!v.id && !v.url);
+  const targetUrl = v.url
+    || (isYouTube
+        ? `https://www.youtube.com/watch?v=${v.id}${resumeSeconds ? `&t=${resumeSeconds}s` : ""}`
+        : "#");
+
+  // Middle-click opens in new tab
+  card.onmousedown = (e) => {
+    if (e.button === 1) window.open(targetUrl, "_blank", "noopener,noreferrer");
+  };
+
+  // Click behavior:
+  // - Shift-click YouTube: play inside hub (tracked progress)
+  // - Normal click: open deep link (resume time if available for YouTube)
+  // - Cmd/Ctrl-click: new tab
+  card.onclick = (e) => {
+    if (isYouTube && e.shiftKey && v.id) {
+      launchYouTubePlayer(v.id, resumeSeconds);
+      return;
+    }
+    const newTab = e.metaKey || e.ctrlKey;
+    if (newTab) window.open(targetUrl, "_blank", "noopener,noreferrer");
+    else window.location.href = targetUrl;
+  };
+
+  const img = document.createElement("img");
+  img.className = "video-card__thumb";
+  img.src = v.thumb || SERVICE_ICONS[v.service] || SERVICE_ICONS.youtube;
+  img.alt = v.title || "Continue";
+  img.loading = "lazy";
+
+  const overlay = document.createElement("div");
+  overlay.className = "video-card__overlay";
+
+  const content = document.createElement("div");
+  content.className = "video-card__content";
+
+  const title = document.createElement("div");
+  title.className = "video-card__title";
+  title.textContent = v.title || "Continue Watching";
+
+  const progress = document.createElement("div");
+  progress.className = "video-card__progress";
+  const bar = document.createElement("span");
+  const pct = v.duration ? Math.min(100, Math.round((v.progress / v.duration) * 100)) : 0;
+  bar.style.width = `${pct}%`;
+  progress.appendChild(bar);
+
+  content.append(title);
+  card.append(img, overlay, content, progress);
+  return card;
+}
+
+// ---- Modal + YouTube Player ----
+let ytReady = false;
+let ytReadyPromise = null;
+let player = null;
+let progressTimer = null;
+
+function ensureYouTubeAPI() {
+  if (ytReadyPromise) return ytReadyPromise;
+  ytReadyPromise = new Promise(resolve => {
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+    window.onYouTubeIframeAPIReady = () => {
+      ytReady = true;
+      resolve();
+    };
+  });
+  return ytReadyPromise;
+}
+
+async function launchYouTubePlayer(videoId, startSeconds = 0) {
+  const meta = await fetchYouTubeMeta(videoId);
+  document.getElementById("modal-title").textContent = meta.title;
+  showModal();
+
+  await ensureYouTubeAPI();
+
+  if (player) {
+    player.loadVideoById({ videoId, startSeconds });
+  } else {
+    player = new YT.Player("yt-container", {
+      playerVars: { autoplay: 1, rel: 0, start: startSeconds },
+      videoId,
+      events: {
+        onReady: () => player.playVideo(),
+        onStateChange: () => {
+          // Start/stop progress tracking based on player state
+          const state = player.getPlayerState();
+          if (state === YT.PlayerState.PLAYING) {
+            if (progressTimer) clearInterval(progressTimer);
+            progressTimer = setInterval(() => {
+              const progress = player.getCurrentTime();
+              const duration = player.getDuration() || 0;
+              saveVideoProgress({
+                id: videoId,
+                title: meta.title,
+                thumb: meta.thumb,
+                progress,
+                duration
+              });
+              renderContinue();
+            }, 1500);
+          } else if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) {
+            if (progressTimer) clearInterval(progressTimer);
+            const progress = player.getCurrentTime();
+            const duration = player.getDuration() || 0;
+            saveVideoProgress({
+              id: videoId,
+              title: meta.title,
+              thumb: meta.thumb,
+              progress,
+              duration
+            });
+            renderContinue();
+          }
+        }
+      }
+    });
+  }
+}
+
+function showModal() {
+  const modal = document.getElementById("player-modal");
+  modal.hidden = false;
+}
+
+function hideModal() {
+  const modal = document.getElementById("player-modal");
+  modal.hidden = true;
+  if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+  // Keep player instance to reuse; you can destroy if desired:
+  // if (player) { player.destroy(); player = null; }
+}
+
+// Prompt to play a YouTube URL inside the hub
+async function promptYouTubeURL() {
+  const input = window.prompt("Paste a YouTube URL or ID:");
+  if (!input) return;
+  const id = parseYouTubeId(input.trim());
+  if (!id) {
+    alert("Could not parse YouTube video ID.");
+    return;
+  }
+  // Resume from saved progress if available
+  const saved = getSavedVideos().find(v => v.id === id);
+  const start = saved ? Math.floor(saved.progress || 0) : 0;
+  launchYouTubePlayer(id, start);
+}
+
+// Wire up modal close + play button
+// Ensure history is loaded on boot before first render
+function boot() {
+  renderGrid();
+  // Load Brave history, then render continue
+  loadBraveHistory().finally(() => renderContinue());
+
+  document.getElementById("clear-continue").addEventListener("click", clearRecent);
+
+  const btn = document.getElementById("play-youtube-btn");
+  if (btn) btn.addEventListener("click", promptYouTubeURL);
+
+  const close = document.getElementById("modal-close");
+  if (close) close.addEventListener("click", hideModal);
+
+  const backdrop = document.querySelector("#player-modal .modal__backdrop");
+  if (backdrop) backdrop.addEventListener("click", hideModal);
+}
+
+document.addEventListener("DOMContentLoaded", boot);
+
+// Top-level additions
+// Use aggregated Brave history
+const BRAVE_HISTORY_API = "http://localhost:5607/history/all";
+let braveHistory = [];
+
+// Local fallback icons for services (used when no thumbnail available)
+const SERVICE_ICONS = {
+  youtube: "icons/youtube.jpg",
+  netflix: "icons/netflix.svg",
+  hulu: "icons/hulu.jpg",
+  disney: "icons/disney.png",
+  prime: "icons/prime.png",
+  max: "icons/hbomax.png",
+  peacock: "icons/peacock.png",
+  paramount: "icons/paramount.png",
+  appletv: "icons/apple_tv.png",
+  applemusic: "icons/apple_music.png",
+  plex: null
+};
+
+async function loadBraveHistory() {
+  try {
+    const res = await fetch(BRAVE_HISTORY_API);
+    if (!res.ok) throw new Error(`History API ${res.status}`);
+    const data = await res.json();
+    braveHistory = Array.isArray(data.items) ? data.items : [];
+    // Normalize items (ensure thumb fallback)
+    braveHistory = braveHistory.map(it => ({
+      ...it,
+      thumb: it.thumb || SERVICE_ICONS[it.service] || null
+    }));
+  } catch (e) {
+    braveHistory = [];
+    console.warn("Brave history fetch failed:", e.message);
+  }
+}
+
+// Add helper to pick the best YouTube resume target (saved progress > Brave history)
+function getYouTubeResumeUrl() {
+  const saved = getSavedVideos();
+  if (saved.length > 0) {
+    const v = saved[0];
+    const t = Math.floor(v.progress || 0);
+    return `https://www.youtube.com/watch?v=${v.id}${t ? `&t=${t}s` : ""}`;
+  }
+  // Brave history (no progress)
+  if (typeof braveHistory !== "undefined" && braveHistory.length > 0) {
+    const v = braveHistory[0];
+    return `https://www.youtube.com/watch?v=${v.id}`;
+  }
+  return null;
+}
