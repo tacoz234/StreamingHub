@@ -50,90 +50,84 @@ function openService(service, evt) {
 }
 
 // In: function createCard(service, { badgeText } = {}) { ... }
+// createCard(service, { badgeText, resumeUrl } = {})
 function createCard(service, { badgeText, resumeUrl } = {}) {
-  const card = document.createElement("button");
-  card.className = "card";
-  card.type = "button";
-  card.setAttribute("role", "listitem");
-  card.setAttribute("aria-label", `${service.name} - ${service.sub}`);
-  card.onmousedown = (e) => {
-    // Middle-click support
-    if (e.button === 1) {
-      const target = resumeUrl && service.id === "youtube" ? resumeUrl : service.url;
-      window.open(target, "_blank", "noopener,noreferrer");
+    const label = service.name || SERVICE_LABELS[service.id] || (service.id || "Open");
+
+    // Anchor only (remove previous button-based declaration)
+    const card = document.createElement("a");
+    card.className = "card";
+    card.setAttribute("role", "listitem");
+    card.setAttribute("aria-label", label);
+    card.href = resumeUrl && service.id === "youtube" ? resumeUrl : service.url;
+
+    card.onclick = (e) => {
+        if (service.id === "youtube" && e.shiftKey) {
+            e.preventDefault();
+            promptYouTubeURL();
+            return;
+        }
+        saveVisit(service.id);
+    };
+
+    const [t0, t1] = service.tint;
+    const tint = document.createElement("div");
+    tint.className = "card__tint";
+    tint.style.background = `linear-gradient(135deg, ${t0}, ${t1})`;
+
+    const bg = document.createElement("div");
+    bg.className = "card__bg";
+
+    const overlay = document.createElement("div");
+    overlay.className = "card__overlay";
+
+    let logo = null;
+    if (service.icon) {
+        card.classList.add("card--has-icon");
+        logo = document.createElement("img");
+        logo.className = "card__logo";
+        logo.src = service.icon;
+        logo.alt = `${label} icon`;
+        logo.loading = "lazy";
     }
-  };
-  card.onclick = (e) => {
-    // Shift-click YouTube tile to play inside the hub (tracked progress)
-    if (service.id === "youtube" && e.shiftKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      promptYouTubeURL();
-      return;
+
+    const content = document.createElement("div");
+    content.className = "card__content";
+
+    const left = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "card__name";
+    name.textContent = service.name || label;
+    const sub = document.createElement("div");
+    sub.className = "card__sub";
+    sub.textContent = service.sub || "";
+
+    left.append(name, sub);
+    content.append(left);
+
+    card.append(bg, tint);
+    if (logo) card.append(logo);
+    card.append(overlay, content);
+
+    if (badgeText) {
+        const badge = document.createElement("div");
+        badge.className = "card__badge";
+        badge.textContent = badgeText;
+        card.appendChild(badge);
     }
-    // If this is a YouTube "Continue" card and we have a resume URL, use it
-    if (service.id === "youtube" && resumeUrl) {
-      const openInNewTab = e.metaKey || e.ctrlKey;
-      if (openInNewTab) {
-        window.open(resumeUrl, "_blank", "noopener,noreferrer");
-      } else {
-        window.location.href = resumeUrl;
-      }
-      // Persist app visit as well
-      saveVisit(service.id);
-      return;
-    }
-    openService(service, e);
-  };
 
-  const [t0, t1] = service.tint;
-  const tint = document.createElement("div");
-  tint.className = "card__tint";
-  tint.style.background = `linear-gradient(135deg, ${t0}, ${t1})`;
+    // Wrap with caption below the card
+    const wrap = document.createElement("div");
+    wrap.className = "card-wrap";
+    wrap.setAttribute("role", "listitem");
 
-  const bg = document.createElement("div");
-  bg.className = "card__bg";
+    const caption = document.createElement("div");
+    caption.className = "card-caption";
+    caption.textContent = label;
+    caption.style.pointerEvents = "none";
 
-  const overlay = document.createElement("div");
-  overlay.className = "card__overlay";
-
-  // Add icon if available
-  let logo = null;
-  if (service.icon) {
-    card.classList.add("card--has-icon");
-    logo = document.createElement("img");
-    logo.className = "card__logo";
-    logo.src = service.icon;
-    logo.alt = `${service.name} icon`;
-    logo.loading = "lazy";
-  }
-
-  const content = document.createElement("div");
-  content.className = "card__content";
-
-  const left = document.createElement("div");
-  const name = document.createElement("div");
-  name.className = "card__name";
-  name.textContent = service.name;
-  const sub = document.createElement("div");
-  sub.className = "card__sub";
-  sub.textContent = service.sub;
-  left.append(name, sub);
-
-  content.append(left);
-
-  // Append in the right order to stack layers
-  card.append(bg, tint);
-  if (logo) card.append(logo);
-  card.append(overlay, content);
-
-  if (badgeText) {
-    const badge = document.createElement("div");
-    badge.className = "card__badge";
-    badge.textContent = badgeText;
-    card.appendChild(badge);
-  }
-
+    wrap.append(card, caption);
+    return wrap;
   return card;
 }
 
@@ -244,69 +238,55 @@ function saveVideoProgress(entry) {
 }
 
 // In: function createVideoCard(v) { ... }
+// createVideoCard(v)
 function createVideoCard(v) {
-  const card = document.createElement("button");
-  card.type = "button";
-  card.className = "video-card";
-  card.setAttribute("role", "listitem");
+    // Build target URL:
+    const resumeSeconds = Math.floor(v.progress || 0);
+    const isYouTube = v.service === "youtube" || (!!v.id && !v.url);
+    const targetUrl = v.url
+        || (isYouTube
+            ? `https://www.youtube.com/watch?v=${v.id}${resumeSeconds ? `&t=${resumeSeconds}s` : ""}`
+            : "#");
 
-  // Build target URL:
-  // - prefer explicit v.url (Netflix/Hulu/etc or Brave history Youtube)
-  // - fallback to YouTube from id
-  const resumeSeconds = Math.floor(v.progress || 0);
-  const isYouTube = v.service === "youtube" || (!!v.id && !v.url);
-  const targetUrl = v.url
-    || (isYouTube
-        ? `https://www.youtube.com/watch?v=${v.id}${resumeSeconds ? `&t=${resumeSeconds}s` : ""}`
-        : "#");
+    // Anchor only (remove previous button-based declaration)
+    const card = document.createElement("a");
+    card.className = "video-card";
+    card.setAttribute("role", "listitem");
+    card.href = targetUrl;
 
-  // Middle-click opens in new tab
-  card.onmousedown = (e) => {
-    if (e.button === 1) window.open(targetUrl, "_blank", "noopener,noreferrer");
-  };
+    card.onclick = (e) => {
+        if (isYouTube && e.shiftKey && v.id) {
+            e.preventDefault();
+            launchYouTubePlayer(v.id, resumeSeconds);
+        }
+    };
 
-  // Click behavior:
-  // - Shift-click YouTube: play inside hub (tracked progress)
-  // - Normal click: open deep link (resume time if available for YouTube)
-  // - Cmd/Ctrl-click: new tab
-  card.onclick = (e) => {
-    if (isYouTube && e.shiftKey && v.id) {
-      launchYouTubePlayer(v.id, resumeSeconds);
-      return;
-    }
-    const newTab = e.metaKey || e.ctrlKey;
-    if (newTab) window.open(targetUrl, "_blank", "noopener,noreferrer");
-    else window.location.href = targetUrl;
-  };
+    const img = document.createElement("img");
+    img.className = "video-card__thumb";
+    img.src = v.thumb || SERVICE_ICONS[v.service] || SERVICE_ICONS.youtube;
+    img.alt = v.title || "Continue";
+    img.loading = "lazy";
 
-  const img = document.createElement("img");
-  img.className = "video-card__thumb";
-  img.src = v.thumb || SERVICE_ICONS[v.service] || SERVICE_ICONS.youtube;
-  img.alt = v.title || "Continue";
-  img.loading = "lazy";
+    const overlay = document.createElement("div");
+    overlay.className = "video-card__overlay";
 
-  const overlay = document.createElement("div");
-  overlay.className = "video-card__overlay";
+    const content = document.createElement("div");
+    content.className = "video-card__content";
 
-  const content = document.createElement("div");
-  content.className = "video-card__content";
+    const title = document.createElement("div");
+    title.className = "video-card__title";
+    title.textContent = SERVICE_LABELS[v.service] || (v.service || "Continue");
 
-  const title = document.createElement("div");
-  title.className = "video-card__title";
+    const progress = document.createElement("div");
+    progress.className = "video-card__progress";
+    const bar = document.createElement("span");
+    const pct = v.duration ? Math.min(100, Math.round((v.progress / v.duration) * 100)) : 0;
+    bar.style.width = `${pct}%`;
+    progress.appendChild(bar);
 
-  // Always show the streaming service label
-  const label = SERVICE_LABELS[v.service] || (v.service || "Continue");
-  title.textContent = label;
-
-  const progress = document.createElement("div");
-  progress.className = "video-card__progress";
-  const bar = document.createElement("span");
-  const pct = v.duration ? Math.min(100, Math.round((v.progress / v.duration) * 100)) : 0;
-  bar.style.width = `${pct}%`;
-  progress.appendChild(bar);
-
-  content.append(title);
-  card.append(img, overlay, content, progress);
+    content.append(title);
+    card.append(img, overlay, content, progress);
+    return card;
 
   // Remove marquee behavior; short labels don’t need it.
   return card;
