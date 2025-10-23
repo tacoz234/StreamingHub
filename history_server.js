@@ -118,11 +118,10 @@ function getRecentYouTube(limit = 50) {
 function getRecentForDomains(limit = 80) {
   const domains = [
     { service: "netflix",   match: "netflix.com",       prefer: [/\/watch\/\d+/, /\/title\/\d+/] },
-    { service: "hulu",      match: "hulu.com",          prefer: [/\/watch\/[A-Za-z0-9]+/, /\/series\/[^\/]+/] },
+    { service: "hulu",      match: "hulu.com",          prefer: [/\/watch\/[A-Za-z0-9]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
     { service: "disney",    match: "disneyplus.com",    prefer: [/\/video\/[A-Za-z0-9]+/, /\/series\/[^\/]+/, /\/movie\/[^\/]+/] },
     { service: "prime",     match: "primevideo.com",    prefer: [/\/detail\/[^\/]+/] },
     { service: "max",       match: "max.com",           prefer: [/\/video\/[A-Za-z0-9-]+/, /\/series\/[^\/]+/] },
-    // Peacock: prefer logic handled inline (flexible), no strict pattern here
     { service: "peacock",   match: "peacocktv.com" },
     { service: "paramount", match: "paramountplus.com", prefer: [/\/shows\/.+\/video\/[A-Za-z0-9]+/, /\/movies\/[^\/]+\/[A-Za-z0-9]+/, /\/shows\/[^\/]+/] }
   ];
@@ -240,6 +239,7 @@ function normalizeSeriesTitle(raw) {
 
   return t.length ? t : null;
 }
+
 
 // Build a grouping key for series; prefer URL slugs/IDs when available
 function urlSeriesKey(item) {
@@ -482,7 +482,6 @@ function inferContentType(item) {
     const p = u.pathname.toLowerCase();
     if (u.hostname.includes("peacocktv.com")) {
       if (p.startsWith("/movies/")) return "movie";
-      // watch pages with "episode" wording are tv; otherwise default to tv
       const t = (item.title || "").toLowerCase();
       if (p.startsWith("/shows/") || p.startsWith("/watch") || t.includes("episode")) return "tv";
     }
@@ -523,7 +522,6 @@ function inferContentType(item) {
     const p = u.pathname.toLowerCase();
     if (u.hostname.includes("peacocktv.com")) {
       if (p.startsWith("/movies/")) return "movie";
-      // watch pages with "episode" wording are tv; otherwise default to tv
       const t = (item.title || "").toLowerCase();
       if (p.startsWith("/shows/") || p.startsWith("/watch") || t.includes("episode")) return "tv";
     }
@@ -587,10 +585,26 @@ async function enrichMeta(items, limit = 40) {
 
         // 1) Choose best URL to scrape OG meta (show/movie slug preferred)
         let urlForMeta = it.url;
+        let huluContextUrl = null;
         try {
           const u = new URL(it.canonicalUrl || it.url);
           if (it.service === "peacock") {
             if (u.pathname.startsWith("/shows/") || u.pathname.startsWith("/movies/")) {
+              urlForMeta = u.toString();
+            }
+          } else if (it.service === "hulu") {
+            const p = u.pathname.toLowerCase();
+            if (p.startsWith("/movie/") || p.startsWith("/series/")) {
+              urlForMeta = u.toString();
+            } else if (p.startsWith("/watch/")) {
+              huluContextUrl = findHuluContextUrl(u.toString());
+              if (huluContextUrl) urlForMeta = huluContextUrl;
+            }
+          } else if (it.service === "netflix") {
+            const mWatch = u.pathname.match(/\/watch\/(\d+)/);
+            if (mWatch) {
+              urlForMeta = `https://www.netflix.com/title/${mWatch[1]}`;
+            } else if (u.pathname.startsWith("/title/")) {
               urlForMeta = u.toString();
             }
           }
@@ -609,10 +623,30 @@ async function enrichMeta(items, limit = 40) {
 
         // Build expected title for matching fallbacks
         const titleFromUrl = guessTitleFromUrl(it.canonicalUrl || it.url);
-        const expectedTitle =
+        let expectedTitle =
           normalizeSeriesTitle(it.title) ||
           titleFromUrl ||
           it.title;
+
+        // Helper: generic title detector to allow title-only improvement
+        function isGenericTitle(service, title) {
+          const t = (title || "").trim().toLowerCase();
+          if (!t) return true;
+          if (service === "hulu") {
+            return t === "hulu" || t === "hulu | watch";
+          }
+          if (service === "netflix") {
+            return t === "netflix";
+          }
+          return false;
+        }
+
+        if (it.service === "hulu" &&
+            /^hulu\s*\|\s*watch$/i.test(expectedTitle) &&
+            huluContextUrl) {
+          const recovered = guessTitleFromUrl(huluContextUrl);
+          if (recovered) expectedTitle = recovered;
+        }
 
         // 2) TMDb fallback (if available) — accept only if title matches
         if ((!meta || !meta.thumb) && TMDB_API_KEY && it.service !== "youtube") {
@@ -773,6 +807,12 @@ function guessTitleFromUrl(rawUrl) {
       }
     }
 
+    // Add Hulu movie slug support (e.g., /movie/anybody-but-you/<id>)
+    if (u.hostname.includes("hulu.com") && segs[0] === "movie" && segs[1]) {
+      const slug = segs[1];
+      return decodeURIComponent(slug).replace(/-/g, " ").trim();
+    }
+
     const movieShapes = [
       { host: "disneyplus.com", prefix: "movie" },
       { host: "peacocktv.com", prefix: "movies" }
@@ -852,4 +892,46 @@ function titlesLooseMatch(expected, candidate) {
   const contains = candidate.includes(expected) || expected.includes(candidate);
 
   return ratio >= 0.5 || contains;
+}
+// Add: findHuluContextUrl — walk Chromium visit chain to locate a prior Hulu movie/series page
+function findHuluContextUrl(watchUrl) {
+  try {
+    const rows = queryRows(`
+      SELECT v.id, v.from_visit, u.url AS url, u2.url AS from_url
+      FROM visits v
+      JOIN urls u ON v.url = u.id
+      LEFT JOIN visits pv ON pv.id = v.from_visit
+      LEFT JOIN urls u2 ON pv.url = u2.id
+      WHERE u.url = ?
+      ORDER BY v.visit_time DESC
+      LIMIT 1
+    `, [watchUrl]);
+
+    if (!rows.length) return null;
+
+    let curFromId = rows[0].from_visit;
+    // Walk up to 5 hops backward to find a Hulu content page
+    for (let i = 0; i < 5 && curFromId; i++) {
+      const hop = queryRows(`
+        SELECT v.id, v.from_visit, u.url AS url
+        FROM visits v
+        JOIN urls u ON v.url = u.id
+        WHERE v.id = ?
+        LIMIT 1
+      `, [curFromId])[0];
+
+      if (!hop) break;
+      curFromId = hop.from_visit;
+
+      try {
+        const u = new URL(hop.url);
+        if (!u.hostname.includes("hulu.com")) continue;
+        const p = u.pathname.toLowerCase();
+        if (p.startsWith("/movie/") || p.startsWith("/series/")) {
+          return hop.url;
+        }
+      } catch {}
+    }
+  } catch {}
+  return null;
 }

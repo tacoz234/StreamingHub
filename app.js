@@ -293,7 +293,10 @@ function createVideoCard(v) {
 
   const title = document.createElement("div");
   title.className = "video-card__title";
-  title.textContent = v.title || "Continue Watching";
+
+  // Always show the streaming service label
+  const label = SERVICE_LABELS[v.service] || (v.service || "Continue");
+  title.textContent = label;
 
   const progress = document.createElement("div");
   progress.className = "video-card__progress";
@@ -304,6 +307,8 @@ function createVideoCard(v) {
 
   content.append(title);
   card.append(img, overlay, content, progress);
+
+  // Remove marquee behavior; short labels don’t need it.
   return card;
 }
 
@@ -436,6 +441,7 @@ const BRAVE_HISTORY_API = "http://localhost:5607/history/all";
 let braveHistory = [];
 
 // Local fallback icons for services (used when no thumbnail available)
+// Add service display labels near SERVICE_ICONS
 const SERVICE_ICONS = {
   youtube: "icons/youtube.jpg",
   netflix: "icons/netflix.svg",
@@ -448,6 +454,20 @@ const SERVICE_ICONS = {
   appletv: "icons/apple_tv.png",
   applemusic: "icons/apple_music.png",
   plex: null
+};
+
+const SERVICE_LABELS = {
+  youtube: "YouTube",
+  netflix: "Netflix",
+  hulu: "Hulu",
+  disney: "Disney+",
+  prime: "Prime Video",
+  max: "Max",
+  peacock: "Peacock",
+  paramount: "Paramount+",
+  appletv: "Apple TV",
+  applemusic: "Apple Music",
+  plex: "Plex"
 };
 
 async function loadBraveHistory() {
