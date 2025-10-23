@@ -1,5 +1,6 @@
 const express = require("express");
 const fs = require("fs");
+const { spawn } = require("child_process");
 
 // Polyfill fetch for Node < 18
 if (typeof fetch === "undefined") {
@@ -18,8 +19,12 @@ const app = express();
 const PORT = 5607;
 
 // Allow hub to fetch data cross-origin
-app.use((_, res, next) => {
+app.use(express.json());
+app.use((req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
@@ -87,6 +92,38 @@ app.get("/history/all", async (req, res) => {
     res.status(500).json({ error: e.message });
   } finally {
     setActiveHistoryPath(null);
+  }
+});
+
+// NEW: launch Brave in a selected profile and open the hub URL (macOS)
+app.post("/launch", (req, res) => {
+  try {
+    const profileId = String(req.body?.profileId || req.query?.profile || "");
+    const targetUrl =
+      String(req.body?.url || req.query?.url) ||
+      `http://127.0.0.1:8080/?profile=${encodeURIComponent(profileId || "Default")}`;
+
+    const match = listProfiles().find(p => p.id === profileId);
+    if (!match) {
+      return res.status(400).json({ error: "Unknown profileId", profileId });
+    }
+
+    // macOS launch: force a new window and profile selection
+    const args = [
+      "-a", "Brave Browser",
+      "-n",              // try to launch a new instance
+      "--args",
+      "--new-window",
+      `--profile-directory=${profileId}`,
+      targetUrl
+    ];
+    const proc = spawn("open", args, { detached: true, stdio: "ignore" });
+    proc.unref();
+
+    res.json({ launched: true, profileId, url: targetUrl });
+  } catch (e) {
+    console.error("Launch failed:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 

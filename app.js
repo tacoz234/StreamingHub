@@ -457,9 +457,15 @@ const SERVICE_LABELS = {
   plex: "Plex"
 };
 
-// NEW: active profile selection
+// NEW: read profile from URL (fallback to localStorage)
 const PROFILE_KEY = "hub_profile_id";
-let activeProfileId = localStorage.getItem(PROFILE_KEY) || null;
+function getProfileFromURL() {
+  try {
+    const u = new URL(window.location.href);
+    return u.searchParams.get("profile");
+  } catch { return null; }
+}
+let activeProfileId = getProfileFromURL() || localStorage.getItem(PROFILE_KEY) || null;
 
 // Update history loader to respect profile
 async function loadBraveHistory() {
@@ -530,14 +536,31 @@ async function showAccountModal() {
     for (const p of profiles) {
       const btn = document.createElement("button");
       btn.className = `profile-btn${activeProfileId === p.id ? " active" : ""}`;
-      // Use friendly label if available, otherwise the raw id
       btn.textContent = p.label || p.id;
       btn.addEventListener("click", async () => {
         activeProfileId = p.id;
         localStorage.setItem(PROFILE_KEY, activeProfileId);
-        hideAccountModal();
-        await loadBraveHistory();
-        renderContinue();
+
+        const targetUrl = `${window.location.origin}${window.location.pathname}?profile=${encodeURIComponent(activeProfileId)}`;
+
+        let launched = false;
+        try {
+          const resp = await fetch("http://localhost:5607/launch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profileId: activeProfileId, url: targetUrl })
+          });
+          launched = resp.ok;
+        } catch (_) {
+          launched = false;
+        }
+
+        modal.hidden = true;
+
+        // Fallback: if server launch fails, reload this tab into the selected profile
+        if (!launched) {
+          window.location.replace(targetUrl);
+        }
       });
       list.appendChild(btn);
     }
