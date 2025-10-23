@@ -108,10 +108,9 @@ app.post("/launch", (req, res) => {
       return res.status(400).json({ error: "Unknown profileId", profileId });
     }
 
-    // macOS launch: force a new window and profile selection
     const args = [
       "-a", "Brave Browser",
-      "-n",              // try to launch a new instance
+      "-n",
       "--args",
       "--new-window",
       `--profile-directory=${profileId}`,
@@ -123,6 +122,69 @@ app.post("/launch", (req, res) => {
     res.json({ launched: true, profileId, url: targetUrl });
   } catch (e) {
     console.error("Launch failed:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// NEW: close hub tabs in Brave (macOS AppleScript)
+// NEW: close hub tabs from the previous profile id, exclude new profile id
+app.post("/close-hub", (req, res) => {
+  try {
+    const host = String(req.body?.host || "127.0.0.1:8080");
+    const alt = "localhost:8080";
+    const sessionId = String(req.body?.sessionId || "");
+    if (!sessionId) {
+      return res.json({ closed: false, reason: "no sessionId provided" });
+    }
+    const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    const script = `
+      set hostStr to "${esc(host)}"
+      set altHostStr to "${alt}"
+      set sidStr to "${esc(sessionId)}"
+
+      tell application "Brave Browser"
+        -- Wait up to ~4s for the new tab with sid to appear
+        set foundNew to false
+        repeat with i from 1 to 20
+          set foundNew to false
+          repeat with w in windows
+            repeat with t in tabs of w
+              set u to URL of t
+              if ((u contains hostStr) or (u contains altHostStr)) and (u contains "sid=" & sidStr) then
+                set foundNew to true
+              end if
+            end repeat
+          end repeat
+          if foundNew then exit repeat
+          delay 0.2
+        end repeat
+
+        set toClose to {}
+        repeat with w in windows
+          repeat with t in tabs of w
+            set u to URL of t
+            set hostMatch to ((u contains hostStr) or (u contains altHostStr))
+            set isNewTab to (u contains "sid=" & sidStr)
+            if hostMatch and (not isNewTab) then
+              set end of toClose to t
+            end if
+          end repeat
+        end repeat
+
+        repeat with t in toClose
+          try
+            close t
+          end try
+        end repeat
+      end tell
+    `;
+    const proc = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+    proc.unref();
+
+    res.json({ closed: true, host, sessionId });
+  } catch (e) {
+    console.error("close-hub failed:", e);
     res.status(500).json({ error: e.message });
   }
 });

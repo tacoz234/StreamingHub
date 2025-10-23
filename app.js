@@ -538,10 +538,14 @@ async function showAccountModal() {
       btn.className = `profile-btn${activeProfileId === p.id ? " active" : ""}`;
       btn.textContent = p.label || p.id;
       btn.addEventListener("click", async () => {
+        const prevId = activeProfileId; // capture the old profile
         activeProfileId = p.id;
         localStorage.setItem(PROFILE_KEY, activeProfileId);
 
-        const targetUrl = `${window.location.origin}${window.location.pathname}?profile=${encodeURIComponent(activeProfileId)}`;
+        // NEW: generate a session token to protect the new tab
+        const sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+
+        const targetUrl = `${window.location.origin}${window.location.pathname}?profile=${encodeURIComponent(activeProfileId)}&sid=${encodeURIComponent(sid)}`;
 
         let launched = false;
         try {
@@ -555,9 +559,18 @@ async function showAccountModal() {
           launched = false;
         }
 
+        // NEW: ask server to close any hub tabs not containing this sid (the old ones)
+        setTimeout(() => {
+          fetch("http://localhost:5607/close-hub", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ host: window.location.host, sessionId: sid })
+          }).catch(() => {});
+        }, 900);
+
         modal.hidden = true;
 
-        // Fallback: if server launch fails, reload this tab into the selected profile
+        // Fallback only if launch fails: reload this tab into the selected profile
         if (!launched) {
           window.location.replace(targetUrl);
         }
