@@ -218,7 +218,7 @@ function normalizeSeriesTitle(raw) {
   t = t.replace(/\bS\d{1,2}\s*[:x]?\s*E\d{1,3}\b/gi, "");
   t = t.replace(/\bS\d{1,2}E\d{1,3}\b/gi, "");
 
-  // Remove "Season 2", "Season 2 Episode 3", "Episode 5", "Ep. 5", "Chapter 3", "Part 2"
+  // Remove "Season 2", "Episode 5", "Ep. 5", "Chapter 3", "Part 2"
   t = t.replace(/\bSeason\s*\d+\b/gi, "");
   t = t.replace(/\bEpisode\s*\d+\b/gi, "");
   t = t.replace(/\bEp\.?\s*\d+\b/gi, "");
@@ -230,6 +230,9 @@ function normalizeSeriesTitle(raw) {
 
   // Drop service suffixes e.g. "The Office - Peacock"
   t = t.replace(/\s*[•\-–—|:]\s*Peacock\b/gi, "");
+
+  // Drop common marketing noise (helps TMDb/TVMaze match)
+  t = t.replace(/\b(Superfan Episodes|Extras|Bonus|Extended Cut|Director'?s Cut|Unrated|Extended)\b/gi, "");
 
   // Clean leftover separators
   t = t.replace(/\s*[•\-–—|:]\s*/g, " ");
@@ -389,37 +392,107 @@ const UA =
 const metaCache = new Map();
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
-async function fetchMeta(url) {
+// fetchItunesArtwork(title, type) — no-key artwork fallback
+async function fetchItunesArtwork(title, type = "tv") {
+    // ... existing code ...
+    if (!title) return null;
+    const media = type === "movie" ? "movie" : "tvShow";
+    try {
+        const url = `https://itunes.apple.com/search?term=${encodeURIComponent(title)}&media=${media}&limit=1`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const hit = Array.isArray(data.results) ? data.results[0] : null;
+        if (!hit) return null;
+        const art = hit.artworkUrl100 || hit.artworkUrl60 || hit.artworkUrl512 || hit.artworkUrl600;
+        if (!art) return null;
+        // Upgrade to higher resolution if possible
+        const hi = art.replace(/\/\d+x\d+bb\./, "/600x600bb.");
+        const finalTitle = hit.trackName || hit.collectionName || title;
+        return { title: finalTitle, thumb: hi };
+    } catch {
+        return null;
+    }
+}
+
+// fetchTvMazePoster(title) — free TV show artwork fallback
+async function fetchTvMazePoster(title) {
+  if (!title) return null;
   try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,*/*",
-        "Referer": "https://www.google.com/"
-      },
-      redirect: "follow"
-    });
+    const url = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(title)}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
-    const html = await res.text();
-    const $ = cheerio.load(html);
-
-    const ogTitle =
-      $('meta[property="og:title"]').attr("content") ||
-      $('meta[name="twitter:title"]').attr("content") ||
-      $("title").text().trim();
-
-    const ogImage =
-      $('meta[property="og:image"]').attr("content") ||
-      $('meta[name="twitter:image"]').attr("content");
-
-    return {
-      title: ogTitle && ogTitle.length ? ogTitle : null,
-      thumb: ogImage && ogImage.length ? ogImage : null
-    };
+    const data = await res.json();
+    const img = data?.image?.original || data?.image?.medium;
+    if (!img) return null;
+    const finalTitle = data?.name || title;
+    return { title: finalTitle, thumb: img };
   } catch {
     return null;
   }
+}
+
+// fetchMeta(url) — make OG images absolute if relative
+async function fetchMeta(url) {
+    try {
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": UA,
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,*/*",
+                "Referer": "https://www.google.com/"
+            },
+            redirect: "follow"
+        });
+        if (!res.ok) return null;
+        const html = await res.text();
+        const $ = cheerio.load(html);
+
+        const ogTitle =
+            $('meta[property="og:title"]').attr("content") ||
+            $('meta[name="twitter:title"]').attr("content") ||
+            $("title").text().trim();
+
+        let ogImage =
+            $('meta[property="og:image"]').attr("content") ||
+            $('meta[name="twitter:image"]').attr("content");
+
+        // Make image absolute if site returns a relative URL
+        if (ogImage && !/^https?:\/\//i.test(ogImage)) {
+            try {
+                ogImage = new URL(ogImage, url).toString();
+            } catch (_) {}
+        }
+
+        return {
+            title: ogTitle && ogTitle.length ? ogTitle : null,
+            thumb: ogImage && ogImage.length ? ogImage : null
+        };
+    } catch {
+        return null;
+    }
+}
+
+// inferContentType(item) — decide whether to search as movie or tv show
+function inferContentType(item) {
+  try {
+    const u = new URL(item.canonicalUrl || item.url);
+    const p = u.pathname.toLowerCase();
+    if (u.hostname.includes("peacocktv.com")) {
+      if (p.startsWith("/movies/")) return "movie";
+      // watch pages with "episode" wording are tv; otherwise default to tv
+      const t = (item.title || "").toLowerCase();
+      if (p.startsWith("/shows/") || p.startsWith("/watch") || t.includes("episode")) return "tv";
+    }
+    if (u.hostname.includes("disneyplus.com") && p.startsWith("/movie/")) return "movie";
+    if (u.hostname.includes("max.com") && p.startsWith("/video/")) return "tv";
+    if (u.hostname.includes("hulu.com") && p.startsWith("/series/")) return "tv";
+    if (u.hostname.includes("paramountplus.com") && p.startsWith("/movies/")) return "movie";
+  } catch {}
+  // fallback: title heuristics
+  const t = (item.title || "").toLowerCase();
+  if (t.includes(":")) return "tv"; // many episodes have ':' in titles
+  return "movie"; // safe default; tv will still find art in many cases
 }
 
 async function fetchTmdbPoster(title) {
@@ -441,14 +514,60 @@ async function fetchTmdbPoster(title) {
   }
 }
 
+// inferContentType(item) — decide whether to search as movie or tv show
+function inferContentType(item) {
+  try {
+    const u = new URL(item.canonicalUrl || item.url);
+    const p = u.pathname.toLowerCase();
+    if (u.hostname.includes("peacocktv.com")) {
+      if (p.startsWith("/movies/")) return "movie";
+      // watch pages with "episode" wording are tv; otherwise default to tv
+      const t = (item.title || "").toLowerCase();
+      if (p.startsWith("/shows/") || p.startsWith("/watch") || t.includes("episode")) return "tv";
+    }
+    if (u.hostname.includes("disneyplus.com") && p.startsWith("/movie/")) return "movie";
+    if (u.hostname.includes("max.com") && p.startsWith("/video/")) return "tv";
+    if (u.hostname.includes("hulu.com") && p.startsWith("/series/")) return "tv";
+    if (u.hostname.includes("paramountplus.com") && p.startsWith("/movies/")) return "movie";
+  } catch {}
+  // fallback: title heuristics
+  const t = (item.title || "").toLowerCase();
+  if (t.includes(":")) return "tv"; // many episodes have ':' in titles
+  return "movie"; // safe default; tv will still find art in many cases
+}
+
+async function fetchTmdbPoster(title) {
+  if (!TMDB_API_KEY || !title) return null;
+  try {
+    const url = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}&include_adult=false`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const hit = Array.isArray(data.results) ? data.results[0] : null;
+    if (!hit) return null;
+    const path = hit.backdrop_path || hit.poster_path;
+    if (!path) return null;
+    const img = `https://image.tmdb.org/t/p/w780${path}`;
+    const finalTitle = hit.name || hit.title || title;
+    return { title: finalTitle, thumb: img };
+  } catch {
+    return null;
+  }
+}
+
+// enrichMeta(items) — prefer Peacock show/movie pages for art; add iTunes fallback
+// enrichMeta(items) — validate Peacock images and never return broken thumbs
 async function enrichMeta(items, limit = 40) {
   const tasks = [];
   for (const it of items.slice(0, limit)) {
-    if (it.thumb && it.title) continue;
+    // Proceed if missing thumb or thumb is the generic Peacock icon
+    const hasGenericPeacock = (it.thumb || "").includes("icons/peacock.png");
+    if ((it.thumb && !hasGenericPeacock) && it.title) continue;
     if (!it.url) continue;
 
-    const cached = metaCache.get(it.url);
-    if (cached) {
+    const cacheKey = it.canonicalUrl || it.url;
+    const cached = metaCache.get(cacheKey);
+    if (cached && !hasGenericPeacock) {
       if (cached?.thumb && !it.thumb) it.thumb = cached.thumb;
       if (cached?.title && (!it.title || it.title === it.service)) it.title = cached.title;
       continue;
@@ -456,18 +575,81 @@ async function enrichMeta(items, limit = 40) {
 
     tasks.push(
       (async () => {
+        let meta = null;
+
+        // 0) Peacock-direct thumbnail via playback UUID (validate and try variants)
+        if (it.service === "peacock" && it.peacockAssetId) {
+          const img = await choosePeacockImage(it.peacockAssetId);
+          if (img) meta = { title: it.title || null, thumb: img };
+        }
+
+        // 1) Choose best URL to scrape OG meta (show/movie slug preferred)
+        let urlForMeta = it.url;
+        try {
+          const u = new URL(it.canonicalUrl || it.url);
+          if (it.service === "peacock") {
+            if (u.pathname.startsWith("/shows/") || u.pathname.startsWith("/movies/")) {
+              urlForMeta = u.toString();
+            }
+          }
+        } catch {}
+
         // First try OG/Twitter meta
-        let meta = await fetchMeta(it.url);
-        // If Peacock (often behind login) or meta has no image, attempt TMDb using normalized series title
-        if ((!meta || !meta.thumb) && it.service !== "youtube") {
-          const normTitle = normalizeSeriesTitle(it.title) || it.title;
-          const tmdb = await fetchTmdbPoster(normTitle);
-          if (tmdb) {
-            meta = { title: meta?.title || tmdb.title, thumb: tmdb.thumb };
+        if (!meta || !meta.thumb) {
+          const og = await fetchMeta(urlForMeta);
+          if (og) {
+            meta = {
+              title: meta?.title || og.title || null,
+              thumb: meta?.thumb || og.thumb || null
+            };
           }
         }
-        metaCache.set(it.url, meta || null);
-        if (meta?.thumb && !it.thumb) it.thumb = meta.thumb;
+
+        // Title candidate for fallbacks
+        const titleFromUrl = guessTitleFromUrl(it.canonicalUrl || it.url);
+        const normalizedTitle =
+          normalizeSeriesTitle(it.title) ||
+          titleFromUrl ||
+          it.title;
+
+        // 2) TMDb fallback (if available)
+        if ((!meta || !meta.thumb) && TMDB_API_KEY && it.service !== "youtube") {
+          const tmdb = await fetchTmdbPoster(normalizedTitle);
+          if (tmdb) {
+            meta = { title: meta?.title || tmdb.title, thumb: meta?.thumb || tmdb.thumb };
+          }
+        }
+
+        // 3) TVMaze for TV shows (no key)
+        if ((!meta || !meta.thumb) && it.service !== "youtube") {
+          const kind = inferContentType(it);
+          if (kind === "tv") {
+            const tvm = await fetchTvMazePoster(normalizedTitle);
+            if (tvm) {
+              meta = { title: meta?.title || tvm.title, thumb: meta?.thumb || tvm.thumb };
+            }
+          }
+        }
+
+        // 4) iTunes fallback (no key) — good for movies
+        if ((!meta || !meta.thumb) && it.service !== "youtube") {
+          const kind = inferContentType(it);
+          if (kind === "movie") {
+            const itunes = await fetchItunesArtwork(normalizedTitle, "movie");
+            if (itunes) {
+              meta = { title: meta?.title || itunes.title, thumb: meta?.thumb || itunes.thumb };
+            }
+          }
+        }
+
+        // Final validation: don’t send broken images to the client
+        if (meta?.thumb && !(await validateImage(meta.thumb))) {
+          meta.thumb = null;
+        }
+
+        metaCache.set(cacheKey, meta || null);
+
+        if (meta?.thumb && (hasGenericPeacock || !it.thumb)) it.thumb = meta.thumb;
         if (meta?.title && (!it.title || it.title === it.service)) it.title = meta.title;
       })()
     );
@@ -475,7 +657,13 @@ async function enrichMeta(items, limit = 40) {
   await Promise.allSettled(tasks);
 }
 
-// Canonicalize content URLs and drop non-content pages (Peacock tuned)
+// Helper: extract a UUID (v4 style) anywhere in a string
+function extractUuid(str) {
+  const m = String(str).match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+  return m ? m[0] : null;
+}
+
+// Canonicalize content URLs for dedupe/grouping, but preserve original URL for launching
 function canonicalizeItem(item) {
   try {
     const u = new URL(item.url);
@@ -483,13 +671,28 @@ function canonicalizeItem(item) {
     const canon = new URL(item.url); // clone
     let changed = false;
 
+    let peacockAssetId = null;
+
     if (host.includes("peacocktv.com")) {
       const exclude = new Set(["/", "/start", "/home", "/browse", "/channels", "/sports", "/kids", "/account"]);
       if (exclude.has(u.pathname)) return null;
 
-      // Build a stable canonical URL for dedupe:
-      // - Prefer /watch/<type>/<id> if we can detect type+id
-      // - Otherwise preserve show/movie slug without trailing slash
+      // Try to extract a UUID-like asset id from path or query, including forms like "vod-<uuid>"
+      const rawIdFromPath =
+        (u.pathname.match(/\/watch\/(?:playback|asset|play)\/([^\/?#]+)/i) || [])[1];
+      const rawIdFromQuery =
+        u.searchParams.get("playbackId") ||
+        u.searchParams.get("assetId") ||
+        u.searchParams.get("asset_id") ||
+        u.searchParams.get("id") ||
+        u.searchParams.get("cid") ||
+        u.searchParams.get("uuid");
+
+      const candidate = rawIdFromPath || rawIdFromQuery;
+      // If value includes a prefix like "vod-" or "asset-", strip prefix and extract the UUID
+      peacockAssetId = extractUuid(candidate) || extractUuid(item.url);
+
+      // Canonical path normalization (unchanged behavior)
       if (u.pathname.startsWith("/watch")) {
         const mPlayback = u.pathname.match(/\/watch\/playback\/([^\/?#]+)/);
         const mAsset    = u.pathname.match(/\/watch\/asset\/([^\/?#]+)/);
@@ -505,21 +708,19 @@ function canonicalizeItem(item) {
         else if (mAsset) { canon.pathname = `/watch/asset/${mAsset[1]}`; changed = true; }
         else if (mPlay) { canon.pathname = `/watch/play/${mPlay[1]}`; changed = true; }
         else if (qpId) { canon.pathname = `/watch/playback/${qpId}`; changed = true; }
-        else {
-          // No clear id; normalize to just /watch for canonical key
-          canon.pathname = "/watch";
-          changed = true;
-        }
+        else { canon.pathname = "/watch"; changed = true; }
       } else if (u.pathname.startsWith("/shows/") || u.pathname.startsWith("/movies/")) {
-        // Normalize trailing slash for slug pages
         if (canon.pathname.endsWith("/")) { canon.pathname = canon.pathname.slice(0, -1); changed = true; }
       }
 
-      // Always strip query for canonical URL
       if (canon.search) { canon.search = ""; changed = true; }
     }
 
-    return { ...item, canonicalUrl: changed ? canon.toString() : item.url };
+    return {
+      ...item,
+      canonicalUrl: changed ? canon.toString() : item.url,
+      peacockAssetId
+    };
   } catch {
     return { ...item, canonicalUrl: item.url };
   }
@@ -530,4 +731,87 @@ function normalizeItems(items) {
   return items
     .map(it => canonicalizeItem(it))
     .filter(Boolean);
+}
+
+// guessTitleFromUrl(url) — derive a reasonable series/movie title from known slugs
+function guessTitleFromUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    const segs = u.pathname.toLowerCase().split("/").filter(Boolean);
+
+    // Peacock
+    if (u.hostname.includes("peacocktv.com")) {
+      if (segs[0] === "shows" || segs[0] === "movies") {
+        const slug = segs[1] || "";
+        return decodeURIComponent(slug).replace(/-/g, " ").trim();
+      }
+      return null;
+    }
+
+    // Hulu, Disney+, Max, Paramount+ — common series/movie slug shapes
+    const seriesShapes = [
+      { host: "hulu.com", prefix: "series" },
+      { host: "disneyplus.com", prefix: "series" },
+      { host: "max.com", prefix: "series" },
+      { host: "paramountplus.com", prefix: "shows" }
+    ];
+    for (const s of seriesShapes) {
+      if (u.hostname.includes(s.host) && segs[0] === s.prefix) {
+        const slug = segs[1] || "";
+        return decodeURIComponent(slug).replace(/-/g, " ").trim();
+      }
+    }
+
+    const movieShapes = [
+      { host: "disneyplus.com", prefix: "movie" },
+      { host: "peacocktv.com", prefix: "movies" }
+    ];
+    for (const s of movieShapes) {
+      if (u.hostname.includes(s.host) && segs[0] === s.prefix) {
+        const slug = segs[1] || "";
+        return decodeURIComponent(slug).replace(/-/g, " ").trim();
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// Build a Peacock image-service URL from a playback UUID
+function peacockImageFromAssetId(assetId, opts = {}) {
+  if (!assetId) return null;
+  const variant = opts.variant || "COVER_TITLE_WIDE"; // landscape fits your cards
+  const size = opts.size || "780x439";
+  const quality = opts.quality || 85;
+  const fmt = opts.format || "webp";
+  const lang = opts.language || "eng";
+  const prop = opts.proposition || "NBCUOTT";
+  const version = opts.version ? `&version=${opts.version}` : "";
+
+  return `https://imageservice.disco.peacocktv.com/uuid/${assetId}/${variant}/${size}?image-quality=${quality}&image-format=${fmt}&language=${lang}&proposition=${prop}${version}`;
+}
+
+// Try multiple Peacock variants/sizes and return the first that validates
+async function choosePeacockImage(assetId) {
+  const candidates = [
+    peacockImageFromAssetId(assetId, { variant: "COVER_TITLE_WIDE", size: "780x439" }),
+    peacockImageFromAssetId(assetId, { variant: "COVER_TITLE_WIDE", size: "1280x720" }),
+    peacockImageFromAssetId(assetId, { variant: "COVER_TITLE_TALL", size: "600x900" })
+  ];
+  for (const url of candidates) {
+    if (url && await validateImage(url)) return url;
+  }
+  return null;
+}
+
+// validateImage(url) — check if an image URL is actually fetchable
+async function validateImage(url) {
+  // Some CDNs block HEAD; try HEAD first, then a tiny GET range request
+  const head = await fetch(url, { method: "HEAD", redirect: "follow" });
+  if (head.ok) return true;
+  const get = await fetch(url, {
+    method: "GET",
+    headers: { "Range": "bytes=0-0", "Accept": "image/*" },
+    redirect: "follow"
+  });
+  return get.ok;
 }
