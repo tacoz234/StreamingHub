@@ -312,13 +312,15 @@ function seriesKey(item) {
   const kUrl = urlSeriesKey(item);
   if (kUrl) return kUrl;
 
-  // 2) Normalize title (even if it didn’t visibly change, still group)
+  // 2) Normalize title (group purely by title when no slug)
   const norm = normalizeSeriesTitle(item.title) || (item.title || "").trim();
   if (norm) return `${item.service}:title:${norm.toLowerCase()}`;
 
-  // 3) Fallback to thumbnail fingerprint
-  const kThumb = thumbKey(item);
-  if (kThumb) return kThumb;
+  // 3) Fallback to thumbnail fingerprint — but NEVER for Peacock (generic icon collides across series)
+  if (item.service !== "peacock") {
+    const kThumb = thumbKey(item);
+    if (kThumb) return kThumb;
+  }
 
   return null;
 }
@@ -556,16 +558,16 @@ async function fetchTmdbPoster(title) {
 }
 
 // enrichMeta(items) — prefer Peacock show/movie pages for art; add iTunes fallback
-// enrichMeta(items) — validate Peacock images and never return broken thumbs
+// enrichMeta(items) — strict title matching for fallbacks; service+id scoped cache
 async function enrichMeta(items, limit = 40) {
   const tasks = [];
   for (const it of items.slice(0, limit)) {
-    // Proceed if missing thumb or thumb is the generic Peacock icon
     const hasGenericPeacock = (it.thumb || "").includes("icons/peacock.png");
     if ((it.thumb && !hasGenericPeacock) && it.title) continue;
     if (!it.url) continue;
 
-    const cacheKey = it.canonicalUrl || it.url;
+    // Stronger cache key: service + peacockAssetId (if any) + canonicalUrl
+    const cacheKey = `${it.service}:${it.peacockAssetId || ""}:${it.canonicalUrl || it.url}`;
     const cached = metaCache.get(cacheKey);
     if (cached && !hasGenericPeacock) {
       if (cached?.thumb && !it.thumb) it.thumb = cached.thumb;
@@ -605,39 +607,48 @@ async function enrichMeta(items, limit = 40) {
           }
         }
 
-        // Title candidate for fallbacks
+        // Build expected title for matching fallbacks
         const titleFromUrl = guessTitleFromUrl(it.canonicalUrl || it.url);
-        const normalizedTitle =
+        const expectedTitle =
           normalizeSeriesTitle(it.title) ||
           titleFromUrl ||
           it.title;
 
-        // 2) TMDb fallback (if available)
+        // 2) TMDb fallback (if available) — accept only if title matches
         if ((!meta || !meta.thumb) && TMDB_API_KEY && it.service !== "youtube") {
-          const tmdb = await fetchTmdbPoster(normalizedTitle);
-          if (tmdb) {
-            meta = { title: meta?.title || tmdb.title, thumb: meta?.thumb || tmdb.thumb };
+          const tmdb = await fetchTmdbPoster(expectedTitle);
+          if (tmdb && titlesLooseMatch(expectedTitle, tmdb.title)) {
+            meta = {
+              title: meta?.title || tmdb.title,
+              thumb: meta?.thumb || tmdb.thumb
+            };
           }
         }
 
-        // 3) TVMaze for TV shows (no key)
+        // 3) TVMaze for TV shows (no key) — accept only if title matches
         if ((!meta || !meta.thumb) && it.service !== "youtube") {
           const kind = inferContentType(it);
           if (kind === "tv") {
-            const tvm = await fetchTvMazePoster(normalizedTitle);
-            if (tvm) {
-              meta = { title: meta?.title || tvm.title, thumb: meta?.thumb || tvm.thumb };
+            const tvm = await fetchTvMazePoster(expectedTitle);
+            if (tvm && titlesLooseMatch(expectedTitle, tvm.title)) {
+              meta = {
+                title: meta?.title || tvm.title,
+                thumb: meta?.thumb || tvm.thumb
+              };
             }
           }
         }
 
-        // 4) iTunes fallback (no key) — good for movies
+        // 4) iTunes fallback (no key) — accept only if title matches
         if ((!meta || !meta.thumb) && it.service !== "youtube") {
           const kind = inferContentType(it);
           if (kind === "movie") {
-            const itunes = await fetchItunesArtwork(normalizedTitle, "movie");
-            if (itunes) {
-              meta = { title: meta?.title || itunes.title, thumb: meta?.thumb || itunes.thumb };
+            const itunes = await fetchItunesArtwork(expectedTitle, "movie");
+            if (itunes && titlesLooseMatch(expectedTitle, itunes.title)) {
+              meta = {
+                title: meta?.title || itunes.title,
+                thumb: meta?.thumb || itunes.thumb
+              };
             }
           }
         }
@@ -677,7 +688,7 @@ function canonicalizeItem(item) {
       const exclude = new Set(["/", "/start", "/home", "/browse", "/channels", "/sports", "/kids", "/account"]);
       if (exclude.has(u.pathname)) return null;
 
-      // Try to extract a UUID-like asset id from path or query, including forms like "vod-<uuid>"
+      // Try to extract UUID-like asset id from path or query (including vod-<uuid>)
       const rawIdFromPath =
         (u.pathname.match(/\/watch\/(?:playback|asset|play)\/([^\/?#]+)/i) || [])[1];
       const rawIdFromQuery =
@@ -689,10 +700,9 @@ function canonicalizeItem(item) {
         u.searchParams.get("uuid");
 
       const candidate = rawIdFromPath || rawIdFromQuery;
-      // If value includes a prefix like "vod-" or "asset-", strip prefix and extract the UUID
-      peacockAssetId = extractUuid(candidate) || extractUuid(item.url);
+      peacockAssetId = extractUuid(candidate) || extractUuid(item.url) || null;
 
-      // Canonical path normalization (unchanged behavior)
+      // Canonicalize only when we have a definite ID or slug.
       if (u.pathname.startsWith("/watch")) {
         const mPlayback = u.pathname.match(/\/watch\/playback\/([^\/?#]+)/);
         const mAsset    = u.pathname.match(/\/watch\/asset\/([^\/?#]+)/);
@@ -708,12 +718,13 @@ function canonicalizeItem(item) {
         else if (mAsset) { canon.pathname = `/watch/asset/${mAsset[1]}`; changed = true; }
         else if (mPlay) { canon.pathname = `/watch/play/${mPlay[1]}`; changed = true; }
         else if (qpId) { canon.pathname = `/watch/playback/${qpId}`; changed = true; }
-        else { canon.pathname = "/watch"; changed = true; }
+        // IMPORTANT: do NOT collapse to generic "/watch" without an ID — keep the original path
       } else if (u.pathname.startsWith("/shows/") || u.pathname.startsWith("/movies/")) {
         if (canon.pathname.endsWith("/")) { canon.pathname = canon.pathname.slice(0, -1); changed = true; }
       }
 
-      if (canon.search) { canon.search = ""; changed = true; }
+      // Strip query only when we changed the canonical path
+      if (changed && canon.search) { canon.search = ""; }
     }
 
     return {
@@ -814,4 +825,31 @@ async function validateImage(url) {
     redirect: "follow"
   });
   return get.ok;
+}
+
+// Helpers: canonicalize titles and verify loose matches
+function canonicalTitle(t) {
+  if (!t) return "";
+  return t
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titlesLooseMatch(expected, candidate) {
+  expected = canonicalTitle(expected);
+  candidate = canonicalTitle(candidate);
+  if (!expected || !candidate) return false;
+
+  // Simple token overlap: require at least half of expected tokens to appear in candidate
+  const expTokens = expected.split(" ").filter(Boolean);
+  const candTokens = new Set(candidate.split(" ").filter(Boolean));
+  const hits = expTokens.filter(tok => candTokens.has(tok)).length;
+  const ratio = hits / expTokens.length;
+
+  // Also allow substring containment as a fallback
+  const contains = candidate.includes(expected) || expected.includes(candidate);
+
+  return ratio >= 0.5 || contains;
 }
