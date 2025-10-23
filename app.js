@@ -91,23 +91,10 @@ function createCard(service, { badgeText, resumeUrl } = {}) {
         logo.loading = "lazy";
     }
 
-    const content = document.createElement("div");
-    content.className = "card__content";
-
-    const left = document.createElement("div");
-    const name = document.createElement("div");
-    name.className = "card__name";
-    name.textContent = service.name || label;
-    const sub = document.createElement("div");
-    sub.className = "card__sub";
-    sub.textContent = service.sub || "";
-
-    left.append(name, sub);
-    content.append(left);
-
+    // Removed inner text content (name/sub) so the card itself has no caption
     card.append(bg, tint);
     if (logo) card.append(logo);
-    card.append(overlay, content);
+    card.append(overlay);
 
     if (badgeText) {
         const badge = document.createElement("div");
@@ -116,7 +103,6 @@ function createCard(service, { badgeText, resumeUrl } = {}) {
         card.appendChild(badge);
     }
 
-    // Wrap with caption below the card
     const wrap = document.createElement("div");
     wrap.className = "card-wrap";
     wrap.setAttribute("role", "listitem");
