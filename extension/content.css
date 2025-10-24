@@ -1,0 +1,5 @@
+.unav-focus {
+  outline: 3px solid #0a84ff !important;
+  outline-offset: 4px !important;
+  border-radius: 12px !important;
+}

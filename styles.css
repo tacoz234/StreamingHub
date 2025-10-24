@@ -124,6 +124,11 @@ a { color: inherit; text-decoration: none; }
   align-items: flex-end;
   isolation: isolate;
   outline: none;
+  kbd-focus {
+    outline: 3px solid var(--accent, #0a84ff);
+    outline-offset: 4px;
+    border-radius: 12px;
+  }
 }
 .card:focus-visible { box-shadow: 0 0 0 3px rgba(255,255,255,0.3); }
 .card__bg {

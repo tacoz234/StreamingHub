@@ -390,7 +390,6 @@ async function promptYouTubeURL() {
 
 // Wire up modal close + play button
 // Ensure history is loaded on boot before first render
-// In boot()
 function boot() {
   renderGrid();
   loadBraveHistory().finally(() => renderContinue());
@@ -415,6 +414,10 @@ function boot() {
 
   const acctBackdrop = document.querySelector("#account-modal .modal__backdrop");
   if (acctBackdrop) acctBackdrop.addEventListener("click", hideAccountModal);
+
+  // Enable TV-style navigation and set initial focus to top-left grid tile
+  enableKeyboardNav();
+  focusInitialElement();
 }
 
   const settings = document.getElementById("btn-settings");
@@ -615,4 +618,298 @@ async function launchInSelectedProfile(targetUrl) {
     // Fallback: navigate in this tab
     window.location.href = targetUrl;
   });
+}
+
+// Top-level keyboard navigation helpers (TV-style)
+let navState = {
+  section: "grid" // 'grid' | 'continue' | 'header'
+};
+
+function enableKeyboardNav() {
+  document.addEventListener("keydown", onNavKeyDown, { capture: true });
+}
+
+function onNavKeyDown(e) {
+  const key = e.key;
+  if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(key)) return;
+
+  const active = document.activeElement;
+  const section = navState.section;
+
+  if (key === "Enter") {
+    e.preventDefault();
+    if (active && typeof active.click === "function") active.click();
+    return;
+  }
+
+  if (section === "grid") {
+    const rows = getGridRows();
+    if (!rows.length) return;
+
+    const pos = findGridPosition(active, rows);
+    // If nothing focused yet, start top-left
+    const rowIdx = pos ? pos.row : 0;
+    const colIdx = pos ? pos.col : 0;
+
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      e.preventDefault();
+      const row = rows[rowIdx];
+      const nextCol = clampIndex(key === "ArrowLeft" ? colIdx - 1 : colIdx + 1, row.length);
+      const next = row[nextCol];
+      if (next) focusElement(next);
+      return;
+    }
+
+    if (key === "ArrowUp" || key === "ArrowDown") {
+      e.preventDefault();
+      const nextRowIdx = key === "ArrowUp" ? rowIdx - 1 : rowIdx + 1;
+
+      // Top row up → Continue, bottom row down → stay
+      if (nextRowIdx < 0) {
+        const contItems = getSectionItems("continue");
+        if (contItems.length) {
+          navState.section = "continue";
+          const targetIdx = alignByX(rows[rowIdx][colIdx], contItems);
+          focusElement(contItems[targetIdx]);
+        } else {
+          // If no Continue, jump to Header
+          const headerItems = getSectionItems("header");
+          if (headerItems.length) {
+            navState.section = "header";
+            const targetIdx = alignByX(rows[rowIdx][colIdx], headerItems);
+            focusElement(headerItems[targetIdx]);
+          }
+        }
+        return;
+      }
+      if (nextRowIdx >= rows.length) {
+        // Bottom row; do not wrap
+        return;
+      }
+
+      const currEl = rows[rowIdx][colIdx];
+      const targetRow = rows[nextRowIdx];
+      const targetIdx = alignByX(currEl, targetRow);
+      const next = targetRow[targetIdx];
+      if (next) focusElement(next);
+      return;
+    }
+
+    return;
+  }
+
+  if (section === "continue") {
+    const items = getSectionItems("continue");
+    if (!items.length) return;
+
+    const idx = indexOfElement(items, active) ?? 0;
+
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      e.preventDefault();
+      const nextIdx = clampIndex(key === "ArrowLeft" ? idx - 1 : idx + 1, items.length);
+      focusElement(items[nextIdx]);
+      return;
+    }
+
+    if (key === "ArrowUp") {
+      e.preventDefault();
+      const headerItems = getSectionItems("header");
+      if (headerItems.length) {
+        navState.section = "header";
+        const targetIdx = alignByX(items[idx], headerItems);
+        focusElement(headerItems[targetIdx]);
+      }
+      return;
+    }
+
+    if (key === "ArrowDown") {
+      e.preventDefault();
+      const rows = getGridRows();
+      if (rows.length) {
+        navState.section = "grid";
+        const row0 = rows[0];
+        const targetIdx = alignByX(items[idx], row0);
+        focusElement(row0[targetIdx]);
+      }
+      return;
+    }
+    return;
+  }
+
+  if (section === "header") {
+    const items = getSectionItems("header");
+    if (!items.length) return;
+
+    const idx = indexOfElement(items, active) ?? 0;
+
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      e.preventDefault();
+      const nextIdx = clampIndex(key === "ArrowLeft" ? idx - 1 : idx + 1, items.length);
+      focusElement(items[nextIdx]);
+      return;
+    }
+
+    if (key === "ArrowDown") {
+      e.preventDefault();
+      const contItems = getSectionItems("continue");
+      if (contItems.length) {
+        navState.section = "continue";
+        const targetIdx = alignByX(items[idx], contItems);
+        focusElement(contItems[targetIdx]);
+      } else {
+        const rows = getGridRows();
+        if (rows.length) {
+          navState.section = "grid";
+          const row0 = rows[0];
+          const targetIdx = alignByX(items[idx], row0);
+          focusElement(row0[targetIdx]);
+        }
+      }
+      return;
+    }
+
+    // ArrowUp from header: stay (no wrap)
+    if (key === "ArrowUp") {
+      e.preventDefault();
+      return;
+    }
+  }
+}
+
+function focusInitialElement() {
+  const rows = getGridRows();
+  if (rows.length && rows[0].length) {
+    navState.section = "grid";
+    focusElement(rows[0][0]); // top-left
+  }
+}
+
+function getSectionItems(section) {
+  if (section === "header") {
+    return [document.getElementById("btn-account"), document.getElementById("btn-settings")]
+      .filter(Boolean).filter(isVisible);
+  }
+  if (section === "continue") {
+    const row = document.getElementById("continue-row");
+    if (!row) return [];
+    return Array.from(row.querySelectorAll('a.card, a[href], button, [tabindex]:not([tabindex="-1"])'))
+      .filter(isVisible);
+  }
+  return []; // grid handled via getGridRows()
+}
+
+function getGridRows() {
+  const grid = document.getElementById("grid");
+  if (!grid) return [];
+  const cards = Array.from(grid.querySelectorAll("a.card")).filter(isVisible);
+  if (!cards.length) return [];
+
+  // Group by Y (row) using top coordinate
+  const rows = [];
+  const threshold = 20; // px tolerance for row grouping
+  const sorted = cards.slice().sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+
+  for (const el of sorted) {
+    const top = el.getBoundingClientRect().top;
+    let row = rows.find(r => Math.abs(r._top - top) <= threshold);
+    if (!row) {
+      row = [];
+      row._top = top;
+      rows.push(row);
+    }
+    row.push(el);
+  }
+
+  // Sort each row by X (left to right)
+  for (const r of rows) {
+    r.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+  }
+  return rows;
+}
+
+function findGridPosition(active, rows) {
+  if (!active) return null;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const j = row.indexOf(active);
+    if (j >= 0) return { row: i, col: j };
+  }
+  return null;
+}
+
+function indexOfElement(list, el) {
+  const i = el ? list.indexOf(el) : -1;
+  return i >= 0 ? i : null;
+}
+
+function clampIndex(i, len) {
+  if (i < 0) return 0;
+  if (i >= len) return len - 1;
+  return i;
+}
+
+function alignByX(fromEl, candidates) {
+  if (!fromEl) return 0;
+  try {
+    const rc = fromEl.getBoundingClientRect();
+    const cx = rc.left + rc.width / 2;
+    let best = 0, bestDist = Infinity;
+    candidates.forEach((el, idx) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const d = Math.abs(x - cx);
+      if (d < bestDist) { bestDist = d; best = idx; }
+    });
+    return best;
+  } catch {
+    return 0;
+  }
+}
+
+function isVisible(el) {
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const cs = getComputedStyle(el);
+  return cs.visibility !== "hidden" && cs.display !== "none";
+}
+
+function focusElement(el) {
+  document.querySelectorAll(".kbd-focus").forEach(n => n.classList.remove("kbd-focus"));
+  el.classList.add("kbd-focus");
+  el.focus({ preventScroll: false });
+  el.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function findNextByDirection(current, list, key) {
+  const c = current.getBoundingClientRect();
+  const cx = c.left + c.width / 2;
+  const cy = c.top + c.height / 2;
+
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const el of list) {
+    if (el === current) continue;
+    const r = el.getBoundingClientRect();
+    const ex = r.left + r.width / 2;
+    const ey = r.top + r.height / 2;
+
+    const dx = ex - cx;
+    const dy = ey - cy;
+
+    if (key === "ArrowRight" && dx <= 0) continue;
+    if (key === "ArrowLeft" && dx >= 0) continue;
+    if (key === "ArrowDown" && dy <= 0) continue;
+    if (key === "ArrowUp" && dy >= 0) continue;
+
+    const primary = (key === "ArrowLeft" || key === "ArrowRight") ? Math.abs(dx) : Math.abs(dy);
+    const secondary = (key === "ArrowLeft" || key === "ArrowRight") ? Math.abs(dy) : Math.abs(dx);
+
+    const score = primary * 2 + secondary; // prioritize straight moves, penalize diagonal
+    if (score < bestScore) {
+      bestScore = score;
+      best = el;
+    }
+  }
+  return best;
 }
