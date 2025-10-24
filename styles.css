@@ -446,3 +446,9 @@ a { color: inherit; text-decoration: none; }
 .profile-btn.active {
   border-color: rgba(255,255,255,0.35);
 }
+/* Global keyboard focus highlight (applies to grid and continue tiles) */
+.kbd-focus {
+  outline: 3px solid var(--accent, #0a84ff);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
