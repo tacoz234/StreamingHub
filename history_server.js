@@ -108,18 +108,123 @@ app.post("/launch", (req, res) => {
       return res.status(400).json({ error: "Unknown profileId", profileId });
     }
 
-    const args = [
-      "-a", "Brave Browser",
-      "-n",
-      "--args",
+    // Prefer spawning the Brave binary so --profile-directory is honored
+    const braveBin = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+    const binArgs = [
       "--new-window",
       `--profile-directory=${profileId}`,
       targetUrl
     ];
-    const proc = spawn("open", args, { detached: true, stdio: "ignore" });
-    proc.unref();
+    let launched = false;
+    try {
+      console.log("[server:/launch] spawn brave binary", braveBin, binArgs.join(" "));
+      const proc = spawn(braveBin, binArgs, { detached: true, stdio: "ignore" });
+      proc.unref();
+      launched = true;
+    } catch (e) {
+      console.error("[server:/launch] brave binary failed, fallback to open -a", e);
+    }
 
-    res.json({ launched: true, profileId, url: targetUrl });
+    if (!launched) {
+      const args = [
+        "-a", "Brave Browser",
+        targetUrl, // URL before --args
+        "--args",
+        "--new-window",
+        `--profile-directory=${profileId}`
+      ];
+      console.log("[server:/launch] spawn open", args.join(" "));
+      const proc = spawn("open", args, { detached: true, stdio: "ignore" });
+      proc.unref();
+    }
+
+    // After launch, enforce fullscreen without minimizing or double-toggling
+    setTimeout(() => {
+      const script = `
+        tell application "Brave Browser" to activate
+    
+        -- Wait for at least one window
+        repeat with i from 1 to 30
+          try
+            if (count of windows) > 0 then exit repeat
+          end try
+          delay 0.2
+        end repeat
+    
+        -- Unminimize and raise the front window
+        try
+          repeat with w in windows
+            try
+              set value of attribute "AXMinimized" of w to false
+            end try
+          end repeat
+        end try
+        try
+          perform action "AXRaise" of window 1
+        end try
+        delay 0.1
+    
+        -- Check current fullscreen state
+        set isFull to false
+        try
+          set isFull to (value of attribute "AXFullScreen" of window 1)
+        end try
+    
+        if isFull is not true then
+          -- Preferred: click menu 'View → Enter Full Screen' (idempotent)
+          set usedMenu to false
+          try
+            set usedMenu to true
+            click menu item "Enter Full Screen" of menu 1 of menu bar item "View" of menu bar 1
+            delay 0.3
+          on error
+            set usedMenu to false
+          end try
+    
+          -- Re-check after menu click
+          try
+            set isFull to (value of attribute "AXFullScreen" of window 1)
+          end try
+          if isFull is not true and usedMenu is false then
+            -- Fallback: Accessibility attribute
+            try
+              set value of attribute "AXFullScreen" of window 1 to true
+              delay 0.2
+            end try
+            -- Re-check
+            try
+              set isFull to (value of attribute "AXFullScreen" of window 1)
+            end try
+            if isFull is not true then
+              -- Fallback: Shift+Command+F (requested), then Control+Command+F
+              try
+                keystroke "f" using {shift down, command down}
+                delay 0.3
+              end try
+              try
+                set isFull to (value of attribute "AXFullScreen" of window 1)
+              end try
+              if isFull is not true then
+                try
+                  keystroke "f" using {control down, command down}
+                end try
+              end if
+            end if
+          end if
+    
+          -- Ensure window stays visible and raised
+          try
+            set value of attribute "AXMinimized" of window 1 to false
+            perform action "AXRaise" of window 1
+          end try
+        end tell
+      end tell
+    `;
+    const sproc = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+    sproc.unref();
+  }, 1400);
+
+    res.json({ launched: true, profileId, url: targetUrl, fullscreenRequested: true });
   } catch (e) {
     console.error("Launch failed:", e);
     res.status(500).json({ error: e.message });
