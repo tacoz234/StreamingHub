@@ -70,17 +70,12 @@ function createCard(service, { badgeText, resumeUrl } = {}) {
             return;
         }
 
+        // Persist visit and allow default navigation (same tab)
         saveVisit(service.id);
 
-        if (activeProfileId) {
-            console.log("[tiles] click intercepted", { service: service.id, href: card.href, activeProfileId });
-            e.preventDefault();
-            const target = card.href;
-            await launchInSelectedProfile(target);
-        } else {
-            console.log("[tiles] no activeProfileId — letting anchor navigate", { service: service.id, href: card.href });
-            // Let the anchor navigate normally.
-        }
+        // Do NOT prevent default; let the anchor decide:
+        // - Normal click → same tab
+        // - Cmd/Ctrl/middle-click → new tab (native browser behavior)
     };
 
     const [t0, t1] = service.tint;
