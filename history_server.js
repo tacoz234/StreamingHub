@@ -310,7 +310,120 @@ app.post("/open", (req, res) => {
   }
 });
 
+// Helper: open hub in fullscreen on server start
+const HUB_URL = process.env.HUB_URL || "http://127.0.0.1:8080/";
+const HUB_PROFILE_ID = process.env.HUB_PROFILE_ID || "Default";
+
+async function waitForHub(maxMs = 7000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    try {
+      const res = await fetch(HUB_URL, { method: "HEAD" });
+      if (res.ok) return true;
+    } catch {}
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return false;
+}
+
+async function openHubOnStart() {
+  try {
+    const hubReady = await waitForHub();
+    if (!hubReady) {
+      console.warn("[server:start] hub not reachable, opening anyway");
+    }
+
+    const profiles = listProfiles();
+    const match = profiles.find(p => p.id === HUB_PROFILE_ID) || profiles[0];
+    const profileId = match?.id || HUB_PROFILE_ID;
+    const profileArg = match ? `--profile-directory=${profileId}` : null;
+
+    const targetUrl = `${HUB_URL}?profile=${encodeURIComponent(profileId || "Default")}`;
+
+    // Preferred: spawn Brave binary directly with fullscreen flags
+    const braveBin = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+    const useKiosk = process.env.HUB_KIOSK === "1";
+    let launched = false;
+    try {
+      const binArgs = [ "--new-window", useKiosk ? "--kiosk" : "--start-fullscreen" ];
+      if (profileArg) binArgs.push(profileArg);
+      binArgs.push(targetUrl);
+      console.log("[server:start] spawn brave binary", braveBin, binArgs.join(" "));
+      const binProc = spawn(braveBin, binArgs, { detached: true, stdio: "ignore" });
+      binProc.unref();
+      launched = true;
+    } catch (e) {
+      console.error("[server:start] binary launch failed, will try open -a", e);
+    }
+
+    // Fallback: use `open -a` with URL before --args
+    if (!launched) {
+      const args = [
+        "-a", "Brave Browser",
+        targetUrl,
+        "--args",
+        "--new-window",
+        useKiosk ? "--kiosk" : "--start-fullscreen"
+      ];
+      if (profileArg) args.push(profileArg);
+
+      console.log("[server:start] opening hub via open -a", { profileId, targetUrl, args });
+      const proc = spawn("open", args, { detached: true, stdio: "ignore" });
+      proc.unref();
+    }
+
+    // Force macOS fullscreen using requested keystroke first, with reliable fallbacks
+    setTimeout(() => {
+      const script = `
+        -- Bring Brave frontmost
+        tell application "Brave Browser" to activate
+    
+        -- 1) Requested: Shift+Command+F
+        tell application "System Events"
+          try
+            keystroke "f" using {shift down, command down}
+          end try
+        end tell
+    
+        -- 2) Try Accessibility fullscreen attribute (AXFullScreen)
+        tell application "System Events"
+          tell application process "Brave Browser"
+            set frontmost to true
+    
+            -- Wait for window to exist
+            repeat with i from 1 to 25
+              try
+                if (count of windows) > 0 then exit repeat
+              end try
+              delay 0.2
+            end repeat
+    
+            try
+              set value of attribute "AXFullScreen" of window 1 to true
+            end try
+          end tell
+        end tell
+    
+        -- 3) Fallback: Control+Command+F (macOS standard fullscreen)
+        tell application "System Events"
+          try
+            keystroke "f" using {control down, command down}
+          end try
+        end tell
+      `;
+      console.log("[server:start] enforcing fullscreen via AX/menu/keystrokes");
+      const sproc = spawn("osascript", ["-e", script]);
+      sproc.on("error", (e) => console.error("[server:start] fullscreen script error", e));
+      sproc.stderr?.on("data", d => console.error("[server:start] fullscreen stderr:", String(d).trim()));
+      sproc.on("close", (code) => console.log("[server:start] fullscreen script exit", code));
+    }, 1000);
+  } catch (e) {
+    console.error("[server:start] openHubOnStart failed:", e);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`Brave history server listening at http://localhost:${PORT}/history/all`);
   console.log(`Recency filter: last ${RECENCY_DAYS} days`);
+  openHubOnStart();
 });
