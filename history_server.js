@@ -189,6 +189,127 @@ app.post("/close-hub", (req, res) => {
   }
 });
 
+// NEW: open a URL in the selected Brave profile (reuse existing window/tab)
+app.post("/open", (req, res) => {
+  try {
+    const profileId = String(req.body?.profileId || req.query?.profile || "");
+    const url = String(
+      req.body?.url ||
+      req.query?.url ||
+      "http://127.0.0.1:8080/"
+    );
+    const sessionId = String(req.body?.sessionId || "");
+
+    console.log("[server:/open] req", { profileId, url, sessionId });
+
+    const { listProfiles } = require("./src/utils/db");
+    const match = listProfiles().find(p => p.id === profileId);
+    if (!match) {
+      console.error("[server:/open] Unknown profileId", profileId);
+      return res.status(400).json({ error: "Unknown profileId", profileId });
+    }
+    console.log("[server:/open] profile resolved", match.id);
+
+    // Preferred: open via `open` with URL BEFORE --args
+    let opened = false;
+    try {
+      const args = [
+        "-a", "Brave Browser",
+        url,                // URL must come before --args
+        "--args",
+        `--profile-directory=${profileId}`
+      ];
+      console.log("[server:/open] spawn open", args.join(" "));
+      const openProc = spawn("open", args);
+      openProc.on("close", (code) => console.log("[server:/open] open exit", code));
+      opened = true;
+    } catch (e) {
+      console.error("[server:/open] open failed, will try binary", e);
+    }
+
+    // Fallback: spawn Brave binary directly
+    if (!opened) {
+      try {
+        const braveBin = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+        const binArgs = [`--profile-directory=${profileId}`, url];
+        console.log("[server:/open] spawn brave binary", braveBin, binArgs.join(" "));
+        const binProc = spawn(braveBin, binArgs, { detached: true, stdio: "ignore" });
+        binProc.unref();
+        opened = true;
+      } catch (e) {
+        console.error("[server:/open] brave binary failed", e);
+      }
+    }
+
+    // Build focus AppleScript (by sid or hostname)
+    const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const sidStr = esc(sessionId);
+    let host = "";
+    try { host = new URL(url).hostname; } catch {}
+    const hostStr = esc(host);
+
+    const script = `
+      set sidProvided to ${sidStr ? "true" : "false"}
+      set sidStr to "${sidStr}"
+      set hostStr to "${hostStr}"
+
+      tell application "Brave Browser"
+        set foundTab to missing value
+        set foundByHost to missing value
+
+        -- Wait up to ~5s for the tab to appear
+        repeat with i from 1 to 25
+          repeat with w in windows
+            repeat with t in tabs of w
+              set u to URL of t
+              if sidProvided and (u contains ("sid=" & sidStr)) then
+                set foundTab to {w, t}
+                exit repeat
+              end if
+              if (hostStr is not "") and (u contains hostStr) then
+                set foundByHost to {w, t}
+              end if
+            end repeat
+            if foundTab is not missing value then exit repeat
+          end repeat
+
+          if foundTab is not missing value then exit repeat
+          delay 0.2
+        end repeat
+
+        if foundTab is missing value and foundByHost is not missing value then
+          set foundTab to foundByHost
+        end if
+
+        if foundTab is not missing value then
+          set theWindow to item 1 of foundTab
+          set theTab to item 2 of foundTab
+          set index of theWindow to 1
+          set active tab of theWindow to theTab
+          activate
+        else
+          activate
+        end if
+      end tell
+    `;
+
+    // Schedule focus after a short delay to give Brave time to create the tab
+    setTimeout(() => {
+      console.log("[server:/open] focusing tab (sid/host)", { sessionId, host });
+      const focusProc = spawn("osascript", ["-e", script]);
+      focusProc.on("error", (e) => console.error("[server:/open] focus script error", e));
+      focusProc.stdout?.on("data", d => console.log("[server:/open] focus stdout:", String(d).trim()));
+      focusProc.stderr?.on("data", d => console.error("[server:/open] focus stderr:", String(d).trim()));
+      focusProc.on("close", (code) => console.log("[server:/open] focus script exit", code));
+    }, 250);
+
+    res.json({ opened: opened, profileId, url, focusScheduled: true });
+  } catch (e) {
+    console.error("Open failed:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Brave history server listening at http://localhost:${PORT}/history/all`);
   console.log(`Recency filter: last ${RECENCY_DAYS} days`);

@@ -62,13 +62,25 @@ function createCard(service, { badgeText, resumeUrl } = {}) {
     card.setAttribute("aria-label", label);
     card.href = resumeUrl && service.id === "youtube" ? resumeUrl : service.url;
 
-    card.onclick = (e) => {
+    card.onclick = async (e) => {
+        // YouTube inline player (Shift-click)
         if (service.id === "youtube" && e.shiftKey) {
             e.preventDefault();
             promptYouTubeURL();
             return;
         }
+
         saveVisit(service.id);
+
+        if (activeProfileId) {
+            console.log("[tiles] click intercepted", { service: service.id, href: card.href, activeProfileId });
+            e.preventDefault();
+            const target = card.href;
+            await launchInSelectedProfile(target);
+        } else {
+            console.log("[tiles] no activeProfileId — letting anchor navigate", { service: service.id, href: card.href });
+            // Let the anchor navigate normally.
+        }
     };
 
     const [t0, t1] = service.tint;
@@ -580,4 +592,32 @@ async function showAccountModal() {
   }
 
   modal.hidden = false;
+}
+
+// NEW: helper to open a URL in the selected Brave profile via the server
+async function launchInSelectedProfile(targetUrl) {
+  const sid = (window.crypto && typeof window.crypto.randomUUID === "function")
+    ? window.crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+  const urlWithSid = `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}sid=${encodeURIComponent(sid)}`;
+
+  console.log("[tiles] launchInSelectedProfile", {
+    targetUrl,
+    urlWithSid,
+    activeProfileId
+  });
+
+  // Change to '/open' so tiles reuse existing window (no new-window flags)
+  return fetch("http://localhost:5607/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profileId: activeProfileId, url: urlWithSid, sessionId: sid })
+  }).then(res => {
+    console.log("[tiles] /open response", res.status);
+    if (!res.ok) throw new Error(`open failed: ${res.status}`);
+  }).catch((err) => {
+    console.error("[tiles] /open failed, falling back to in-tab nav", err);
+    // Fallback: navigate in this tab
+    window.location.href = targetUrl;
+  });
 }
