@@ -527,12 +527,28 @@ async function fetchProfiles() {
 function hideAccountModal() {
   const modal = document.getElementById("account-modal");
   if (modal) modal.hidden = true;
+
+  // Return nav to header and focus the Account button
+  const acctBtn = document.getElementById("btn-account");
+  if (acctBtn) {
+    navState.section = "header";
+    focusElement(acctBtn);
+  } else {
+    // Fallback to grid top-left if account button not found
+    focusInitialElement();
+  }
 }
 
 async function showAccountModal() {
   const modal = document.getElementById("account-modal");
   const list = document.getElementById("profiles-list");
   if (!modal || !list) return;
+
+  // Unhide and switch nav section to account
+  modal.hidden = false;
+  navState.prevSection = navState.section;
+  navState.section = "account";
+  navState.prevEl = document.activeElement;
 
   const profiles = await fetchProfiles();
   list.innerHTML = "";
@@ -565,31 +581,35 @@ async function showAccountModal() {
             body: JSON.stringify({ profileId: activeProfileId, url: targetUrl })
           });
           launched = resp.ok;
-        } catch (_) {
-          launched = false;
+        } catch (e) {
+          console.warn("Launch in profile failed", e);
         }
 
-        // NEW: ask server to close any hub tabs not containing this sid (the old ones)
-        setTimeout(() => {
-          fetch("http://localhost:5607/close-hub", {
+        // Close modal and restore nav to header
+        hideAccountModal();
+
+        // NEW: ask server to close previous hub tabs (by sid)
+        try {
+          await fetch("http://localhost:5607/close-hub", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ host: window.location.host, sessionId: sid })
-          }).catch(() => {});
-        }, 900);
+            body: JSON.stringify({ sessionId: sid, host: window.location.host })
+          });
+        } catch (e) {
+          console.warn("close-hub failed", e);
+        }
 
-        modal.hidden = true;
-
-        // Fallback only if launch fails: reload this tab into the selected profile
+        // If server didn't launch, fallback: navigate in this tab
         if (!launched) {
-          window.location.replace(targetUrl);
+          window.location.href = targetUrl;
         }
       });
       list.appendChild(btn);
     }
   }
 
-  modal.hidden = false;
+  // Focus the active profile or first item for keyboard navigation
+  focusFirstAccountItem();
 }
 
 // NEW: helper to open a URL in the selected Brave profile via the server
@@ -622,7 +642,9 @@ async function launchInSelectedProfile(targetUrl) {
 
 // Top-level keyboard navigation helpers (TV-style)
 let navState = {
-  section: "grid" // 'grid' | 'continue' | 'header'
+  section: "grid", // 'grid' | 'continue' | 'header' | 'account'
+  prevSection: null,
+  prevEl: null
 };
 
 function enableKeyboardNav() {
@@ -774,6 +796,29 @@ function onNavKeyDown(e) {
       return;
     }
   }
+
+  // Trap focus and navigate inside Account modal
+  if (section === "account") {
+    const items = getAccountItems();
+    if (!items.length) return;
+
+    const idx = indexOfElement(items, active) ?? 0;
+
+    if (key === "ArrowLeft" || key === "ArrowUp") {
+      e.preventDefault();
+      const prevIdx = clampIndex(idx - 1, items.length);
+      focusElement(items[prevIdx]);
+      return;
+    }
+    if (key === "ArrowRight" || key === "ArrowDown") {
+      e.preventDefault();
+      const nextIdx = clampIndex(idx + 1, items.length);
+      focusElement(items[nextIdx]);
+      return;
+    }
+
+    return;
+  }
 }
 
 function focusInitialElement() {
@@ -796,6 +841,29 @@ function getSectionItems(section) {
       .filter(isVisible);
   }
   return []; // grid handled via getGridRows()
+}
+
+// NEW: focusable items inside Account modal (includes Close + profiles)
+function getAccountItems() {
+  const modal = document.getElementById("account-modal");
+  if (!modal || modal.hidden) return [];
+  const content = modal.querySelector(".modal__content");
+  if (!content) return [];
+  return Array.from(content.querySelectorAll('button, [tabindex]:not([tabindex="-1"])'))
+    .filter(isVisible);
+}
+
+// NEW: focus active profile button or first item
+function focusFirstAccountItem() {
+  const items = getAccountItems();
+  if (!items.length) return;
+
+  const activeBtn = items.find(el => el.classList && el.classList.contains("active"));
+  if (activeBtn) {
+    focusElement(activeBtn);
+    return;
+  }
+  focusElement(items[0]);
 }
 
 function getGridRows() {
